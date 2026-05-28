@@ -120,7 +120,7 @@ export function runM2ScenarioCompare(context) {
     demand,
     params,
     monthIndex: predictedPressureMonthIndex,
-    useGTilt: Boolean(params.gTiltData?.length),
+    useGTilt: params.gTiltData?.length >= 8760,
     annualMode: true
   });
 
