@@ -23,6 +23,11 @@ export const STAGE_ORDER = ["m1", "m2", "m3"];
 
 export const DEFAULT_PROJECT_INPUT = {
   projectName: "公共机构停车场光储充评估",
+  weather: {
+    gTiltData: null,
+    gTiltStatus: "尚未加载 TMY CSV",
+    source: "TMY 8760 G_tilt"
+  },
   m1: {
     climateKey: "guangzhou",
     evCount: 100,
@@ -56,9 +61,7 @@ export const DEFAULT_PROJECT_INPUT = {
     monthIndex: 0,
     transformerLimitKw: 500,
     teacherRatio: 0.80,
-    anxietyRatio: 0.20,
-    gTiltData: null,
-    gTiltStatus: "尚未加载 TMY CSV"
+    anxietyRatio: 0.20
   },
   m3: {
     priceShiftThreshold: 0.55,

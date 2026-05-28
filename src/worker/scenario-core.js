@@ -479,6 +479,7 @@ export function simulateEnergyScenario({ hardware, loadCurve, irradiance, params
   let gridCost = 0;
   let unserved = 0;
   let curtailed = 0;
+  let internalDeficit = 0;
   let totalPv = 0;
   let totalDemand = 0;
   let delivered = 0;
@@ -493,6 +494,8 @@ export function simulateEnergyScenario({ hardware, loadCurve, irradiance, params
   const evSeries = [];
   const socSeries = [];
   const gridSeries = [];
+  const gridCostSeries = [];
+  const internalDeficitSeries = [];
   const unservedSeries = [];
   const curtailedSeries = [];
 
@@ -509,6 +512,11 @@ export function simulateEnergyScenario({ hardware, loadCurve, irradiance, params
 
     let availablePv = pvEnergy;
     let remainingLoad = loadEnergy;
+
+    let gridImportThisTick = 0;
+    let gridCostThisTick = 0;
+    let internalDeficitThisTick = 0;
+
     const direct = Math.min(availablePv, remainingLoad);
     availablePv -= direct;
     remainingLoad -= direct;
@@ -530,13 +538,23 @@ export function simulateEnergyScenario({ hardware, loadCurve, irradiance, params
       batteryToLoad += discharge;
     }
 
+    internalDeficitThisTick = Math.max(0, remainingLoad);
+    internalDeficit += internalDeficitThisTick;
+
     if (remainingLoad > 0 && scenario.gridConnected) {
       const gridCapacity = Math.max(0, params.transformerLimitKw) * TICK_HOURS;
       const buy = Math.min(remainingLoad, gridCapacity);
+
       remainingLoad -= buy;
+
       gridImport += buy;
       gridCost += buy * price;
+
+      gridImportThisTick += buy;
+      gridCostThisTick += buy * price;
+
       peakGridKw = Math.max(peakGridKw, buy / TICK_HOURS);
+
       if (price === touPrice.valley) gridValleyKwh += buy;
       else if (price === touPrice.peak) gridPeakKwh += buy;
       else gridFlatKwh += buy;
@@ -556,8 +574,13 @@ export function simulateEnergyScenario({ hardware, loadCurve, irradiance, params
         gridCapacity
       );
       soc += chargeFromGrid;
+
       gridImport += chargeFromGrid;
       gridCost += chargeFromGrid * price;
+
+      gridImportThisTick += chargeFromGrid;
+      gridCostThisTick += chargeFromGrid * price;
+
       gridValleyKwh += chargeFromGrid;
       peakGridKw = Math.max(peakGridKw, chargeFromGrid / TICK_HOURS);
     }
@@ -574,7 +597,13 @@ export function simulateEnergyScenario({ hardware, loadCurve, irradiance, params
     pvSeries.push(pvPower);
     evSeries.push(loadPower);
     socSeries.push(socPct);
-    gridSeries.push(gridImport > 0 ? peakGridKw : 0);
+
+    gridSeries.push(gridImportThisTick / TICK_HOURS);
+
+    gridCostSeries.push(gridCostThisTick);
+
+    internalDeficitSeries.push(internalDeficitThisTick / TICK_HOURS);
+
     unservedSeries.push(Math.max(0, remainingLoad) / TICK_HOURS);
     curtailedSeries.push(Math.max(0, availablePv) / TICK_HOURS);
   }
@@ -596,6 +625,7 @@ export function simulateEnergyScenario({ hardware, loadCurve, irradiance, params
       demandKwh: round(totalDemand, 1),
       deliveredKwh: round(delivered, 1),
       serviceRate: totalDemand > 0 ? round(delivered / totalDemand, 5) : 1,
+      internalDeficitKwh: round(internalDeficit, 1),
       unservedEnergyKwh: round(unserved, 1),
       deficitHours: round(deficitTicks * TICK_HOURS, 1),
       gridImportKwh: round(gridImport, 1),
@@ -621,6 +651,8 @@ export function simulateEnergyScenario({ hardware, loadCurve, irradiance, params
       ev: evSeries,
       soc: socSeries,
       grid: gridSeries,
+      gridCost: gridCostSeries,
+      internalDeficit: internalDeficitSeries,
       unserved: unservedSeries,
       curtailed: curtailedSeries
     }
