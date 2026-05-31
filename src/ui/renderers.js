@@ -133,12 +133,32 @@ function renderChart(container, option, emptyMessage) {
   window.requestAnimationFrame(() => chart.resize());
 }
 
-function lineOption(series, unit = "") {
-  const xData = series[0]?.data?.map((_, i) => i + 1) || [];
+const MONTH_DAYS = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
 
+function formatAnnualTickLabel(index, tickMinutes = 15) {
+  const minutesOfYear = index * tickMinutes;
+  const dayIndex = Math.floor(minutesOfYear / 1440);
+  const minuteOfDay = minutesOfYear % 1440;
+  let dayOfMonth = dayIndex + 1;
+  let monthIndex = 0;
+  while (monthIndex < MONTH_DAYS.length - 1 && dayOfMonth > MONTH_DAYS[monthIndex]) {
+    dayOfMonth -= MONTH_DAYS[monthIndex];
+    monthIndex += 1;
+  }
+  const hour = Math.floor(minuteOfDay / 60);
+  const minute = minuteOfDay % 60;
+  return `${monthIndex + 1}/${dayOfMonth} ${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}`;
+}
+
+function lineOption(series, unit = "", options = {}) {
+  const tickMinutes = options.tickMinutes || 15;
+  const xData = series[0]?.data?.map((_, i) =>
+    options.annualTimeAxis ? formatAnnualTickLabel(i, tickMinutes) : i + 1
+  ) || [];
+  const hasRightAxis = series.some((item) => item.yAxisIndex === 1);
   return {
     animation: false,
-    grid: { left: 54, right: 28, top: 54, bottom: 72 },
+    grid: { left: 54, right: hasRightAxis ? 54 : 28, top: 54, bottom: 72 },
     tooltip: { trigger: "axis" },
     legend: { top: 4, type: "scroll" },
     toolbox: {
@@ -150,9 +170,14 @@ function lineOption(series, unit = "") {
       { type: "slider", xAxisIndex: 0, height: 22, bottom: 24, filterMode: "none" }
     ],
     xAxis: { type: "category", boundaryGap: false, data: xData },
-    yAxis: { type: "value", name: unit, scale: true },
+    yAxis: hasRightAxis
+      ? [
+        { type: "value", name: unit || "kW", scale: true },
+        { type: "value", name: "%", min: 0, max: 100 }
+      ]
+      : { type: "value", name: unit, scale: true },
     series: series.map((item) => ({
-      type: "line", showSymbol: false, smooth: true, sampling: "lttb", ...item
+      type: "line", showSymbol: false, smooth: false, ...item
     }))
   };
 }
@@ -491,6 +516,45 @@ function scenarioCard(result, scenario) {
   `;
 }
 
+function resetM2AnnualCharts(el) {
+  Object.entries(el.annualCharts || {}).forEach(([scenarioKey, container]) => {
+    const scenario = SCENARIOS.find((item) => item.key === scenarioKey);
+    resetChart(container, `运行 M2 后展示 ${scenario?.label || scenarioKey} 全年运行曲线。`);
+  });
+}
+
+function renderM2AnnualScenarioChart(result, scenarioKey, container) {
+  const chart = getScenarioChart(result, scenarioKey);
+  if (!chart?.ev?.length) {
+    resetChart(container, "暂无该情景的全年运行曲线数据。");
+    return;
+  }
+  const isGrid = scenarioKey.startsWith("grid_");
+  const originalDemand = result?.demandProfiles?.initial?.loadCurve || [];
+  const showOriginalDemand = scenarioKey.endsWith("_dispatch") && originalDemand.length;
+  const usesNativeGtilt = result?.weatherSummary?.simulationWeatherMode === "annual_native_gtilt";
+  const pvName = usesNativeGtilt ? "PV 出力（8760 G_tilt）" : "PV 出力";
+  renderChart(container, lineOption([
+    { name: "EV 负荷", data: chart.ev || [], step: "end" },
+    ...(showOriginalDemand ? [{ name: "原始需求", data: originalDemand, step: "end", lineStyle: { type: "dashed" } }] : []),
+    { name: pvName, data: chart.pv || [] },
+    { name: "SOC", data: chart.soc || [], yAxisIndex: 1 },
+    { name: "内部缺口", data: chart.internalDeficit || [], step: "end" },
+    { name: isGrid ? "购电功率" : "最终未满足", data: isGrid ? (chart.grid || []) : (chart.unserved || []), step: "end" },
+    { name: "弃光", data: chart.curtailed || [], step: "end" }
+  ], "kW", {
+    annualTimeAxis: true,
+    tickMinutes: result?.horizon?.tickMinutes || 15
+  }), "运行 M2 后展示全年情景运行曲线。");
+}
+
+function renderM2AnnualCharts(result, el) {
+  const charts = el.annualCharts || {};
+  SCENARIOS.forEach((scenario) => {
+    renderM2AnnualScenarioChart(result, scenario.key, charts[scenario.key]);
+  });
+}
+
 function renderM2(state) {
   const result = state.stages.m2.result;
   const m1 = state.stages.m1.result;
@@ -502,74 +566,41 @@ function renderM2(state) {
       <div><span>PV</span><strong>${n(plan.pvKw, 1)} kW</strong></div>
       <div><span>储能</span><strong>${n(plan.storageKwh, 1)} kWh</strong></div>
       <div><span>PCS</span><strong>${n(plan.pcsKw, 1)} kW</strong></div>
-      <div><span>慢/快充</span><strong>${plan.n7kw || 0} / ${plan.n30kw || 0}</strong></div>
+      <div><span>慢 / 快充</span><strong>${plan.n7kw || 0} / ${plan.n30kw || 0}</strong></div>
       <div><span>S0 投资</span><strong>${n(economics.capexWan, 1)} 万元</strong></div>
     `;
   } else {
-    el.s0Summary.innerHTML = `<div class="empty-note">请先运行 M1 生成 S0。</div>`;
+    el.s0Summary.innerHTML = '<div class="empty-note">请先运行 M1 生成 S0。</div>';
   }
-
   if (!result) {
     setText(el.title, "等待 M2 运行");
-    setText(el.meta, "完成后显示四情景矩阵、SOC 曲线与调度/并网价值。");
+    setText(el.meta, "M2 将用 S0 评价离网/入网与 D0/D1 四个全年情景。");
     el.scenarioMatrix.innerHTML = SCENARIOS.map((scenario) => scenarioCard(null, scenario)).join("");
-    el.comparisonTable.innerHTML = `<div class="empty-note">运行 M2 后展示核心指标对比。</div>`;
-    el.valueCards.innerHTML = `<div class="empty-note">运行 M2 后展示调度价值与电网接入价值。</div>`;
-    resetChart(el.socChart, "运行 M2 后展示四情景 SOC 曲线。");
-    resetChart(el.unservedChart, "运行 M2 后展示离网缺口对比。");
-    resetChart(el.gridChart, "运行 M2 后展示并网购电对比。");
+    el.comparisonTable.innerHTML = '<div class="empty-note">运行 M2 后展示核心指标对比。</div>';
+    el.valueCards.innerHTML = '<div class="empty-note">运行 M2 后展示调度价值与电网接入价值。</div>';
+    resetM2AnnualCharts(el);
     return;
   }
-
-  setText(el.title, "S0 四情景运行评价已完成");
-  setText(el.meta, `${result.summary?.monthName || "压力月"} · ${result.summary?.scenarioCount || 4} 个情景 · M2 不做硬件优化`);
+  const horizon = result.horizon || {};
+  const summary = result.summary || {};
+  setText(el.title, "S0 全年四情景运行评价已完成");
+  setText(el.meta, `${horizon.days || summary.annualDays || 365} 天 / ${horizon.ticks || summary.ticks || 35040} 步 / 固定 S0 硬件`);
   el.scenarioMatrix.innerHTML = SCENARIOS.map((scenario) => scenarioCard(result, scenario)).join("");
-
   const rows = [
-    ["未满足电量", ...SCENARIOS.map((s) => `${n(getScenarioSummary(result, s.key).unservedEnergyKwh, 1)} kWh`)],
     ["服务满足率", ...SCENARIOS.map((s) => pct(getScenarioSummary(result, s.key).serviceRate, 1))],
-    ["最低 SOC", ...SCENARIOS.map((s) => `${n(getScenarioSummary(result, s.key).socMinPct, 1)}%`)],
-    ["购电量", ...SCENARIOS.map((s) => s.key.startsWith("grid_") ? `${n(getScenarioSummary(result, s.key).gridImportKwh, 1)} kWh` : "--")],
-    ["购电成本", ...SCENARIOS.map((s) => s.key.startsWith("grid_") ? `${n(getScenarioSummary(result, s.key).gridCostYuan, 1)} 元` : "--")],
-    ["电网依赖率", ...SCENARIOS.map((s) => s.key.startsWith("grid_") ? pct(getScenarioSummary(result, s.key).gridDependencyRate, 1) : "--")]
+    ["内部缺口", ...SCENARIOS.map((s) => `${n(getScenarioSummary(result, s.key).internalDeficitKwh, 1)} kWh`)],
+    ["最终未满足", ...SCENARIOS.map((s) => `${n(getScenarioSummary(result, s.key).unservedEnergyKwh, 1)} kWh`)],
+    ["购电量", ...SCENARIOS.map((s) => `${n(getScenarioSummary(result, s.key).gridImportKwh, 1)} kWh`)],
+    ["购电成本", ...SCENARIOS.map((s) => `${n(getScenarioSummary(result, s.key).gridCostYuan, 1)} 元`)],
+    ["最低 SOC", ...SCENARIOS.map((s) => `${n(getScenarioSummary(result, s.key).socMinPct, 1)}%`)]
   ];
   el.comparisonTable.innerHTML = tableHtml(["指标", ...SCENARIOS.map((s) => s.label)], rows);
-
-  renderChart(el.socChart, lineOption(SCENARIOS.map((scenario) => ({
-    name: scenario.label,
-    data: getScenarioChart(result, scenario.key)?.soc || []
-  })), "%"), "运行 M2 后展示四情景 SOC 曲线。");
-
-  renderChart(el.unservedChart, barOption(["离网-规则", "离网-调度"], [{
-    name: "未满足电量",
-    data: [
-      getScenarioSummary(result, "offgrid_rule").unservedEnergyKwh || 0,
-      getScenarioSummary(result, "offgrid_dispatch").unservedEnergyKwh || 0
-    ]
-  }], "kWh"), "运行 M2 后展示离网缺口对比。");
-
-  renderChart(el.gridChart, barOption(["并网-规则", "并网-调度"], [
-    {
-      name: "购电量",
-      data: [
-        getScenarioSummary(result, "grid_rule").gridImportKwh || 0,
-        getScenarioSummary(result, "grid_dispatch").gridImportKwh || 0
-      ]
-    },
-    {
-      name: "购电成本",
-      data: [
-        getScenarioSummary(result, "grid_rule").gridCostYuan || 0,
-        getScenarioSummary(result, "grid_dispatch").gridCostYuan || 0
-      ]
-    }
-  ]), "kWh / 元", "运行 M2 后展示并网购电对比。");
-
+  renderM2AnnualCharts(result, el);
   const comparison = result.comparison || {};
   el.valueCards.innerHTML = `
-    <div class="value-card"><span>离网调度价值</span><strong>缺口降低 ${n(comparison.dispatchGainOffgrid?.unservedReductionKwh, 1)} kWh</strong><small>服务率提升 ${pct(comparison.dispatchGainOffgrid?.serviceRateGain || 0, 2)}</small></div>
-    <div class="value-card"><span>并网调度价值</span><strong>购电成本降低 ${n(comparison.dispatchGainGrid?.gridCostReductionYuan, 1)} 元</strong><small>购电量降低 ${n(comparison.dispatchGainGrid?.gridImportReductionKwh, 1)} kWh</small></div>
-    <div class="value-card"><span>电网接入价值</span><strong>缺口降低 ${n(comparison.gridAccessGain?.unservedReductionKwh, 1)} kWh</strong><small>服务率提升 ${pct(comparison.gridAccessGain?.serviceRateGain || 0, 2)}</small></div>
+    <div class="value-card"><span>离网调度价值</span><strong>${n(comparison.dispatchGainOffgrid?.unservedReductionKwh, 1)} kWh</strong><small>未满足电量降低</small></div>
+    <div class="value-card"><span>入网调度价值</span><strong>${n(comparison.dispatchGainGrid?.gridImportReductionKwh, 1)} kWh</strong><small>购电量降低</small></div>
+    <div class="value-card"><span>电网接入价值</span><strong>${n(comparison.gridAccessGain?.unservedReductionKwh, 1)} kWh</strong><small>未满足电量降低</small></div>
   `;
 }
 

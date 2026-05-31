@@ -522,16 +522,16 @@ export function simulateEnergyScenario({ hardware, loadCurve, irradiance, params
     remainingLoad -= direct;
     pvToLoad += direct;
 
-    const reservePct = scenario.dispatchEnabled && !scenario.gridConnected
-      ? (hour < 10 || hour >= 17 ? 0.18 : 0.08)
-      : 0.05;
-    const reserve = hardware.storageKwh * reservePct;
-    const canDischarge = Math.max(0, soc - reserve);
-    const dischargeLimit = hardware.pcsKw * TICK_HOURS;
-    const dischargeAllowed =
-      !scenario.gridConnected || !scenario.dispatchEnabled || price >= touPrice.flat;
+    if (availablePv > 0 && hardware.storageKwh > 0) {
+      const charge = Math.min(availablePv, hardware.pcsKw * TICK_HOURS, hardware.storageKwh - soc);
+      soc += charge;
+      availablePv -= charge;
+    }
 
-    if (remainingLoad > 0 && dischargeAllowed) {
+    const canDischarge = Math.max(0, soc);
+    const dischargeLimit = hardware.pcsKw * TICK_HOURS;
+
+    if (remainingLoad > 0) {
       const discharge = Math.min(remainingLoad, dischargeLimit, canDischarge);
       soc -= discharge;
       remainingLoad -= discharge;
@@ -565,31 +565,6 @@ export function simulateEnergyScenario({ hardware, loadCurve, irradiance, params
       deficitTicks += 1;
     }
 
-    if (scenario.dispatchEnabled && scenario.gridConnected && price === touPrice.valley && hardware.storageKwh > 0) {
-      const targetSoc = hardware.storageKwh * 0.65;
-      const gridCapacity = Math.max(0, params.transformerLimitKw) * TICK_HOURS;
-      const chargeFromGrid = Math.min(
-        Math.max(0, targetSoc - soc),
-        hardware.pcsKw * TICK_HOURS,
-        gridCapacity
-      );
-      soc += chargeFromGrid;
-
-      gridImport += chargeFromGrid;
-      gridCost += chargeFromGrid * price;
-
-      gridImportThisTick += chargeFromGrid;
-      gridCostThisTick += chargeFromGrid * price;
-
-      gridValleyKwh += chargeFromGrid;
-      peakGridKw = Math.max(peakGridKw, chargeFromGrid / TICK_HOURS);
-    }
-
-    if (availablePv > 0 && hardware.storageKwh > 0) {
-      const charge = Math.min(availablePv, hardware.pcsKw * TICK_HOURS, hardware.storageKwh - soc);
-      soc += charge;
-      availablePv -= charge;
-    }
     curtailed += Math.max(0, availablePv);
 
     const socPct = hardware.storageKwh > 0 ? soc / hardware.storageKwh * 100 : 0;

@@ -221,19 +221,19 @@
         <div class="panel-head">
           <div>
             <span class="eyebrow">Stage M2</span>
-            <h3>M2 四情景运行评价</h3>
-            <p>拿 M1 的 S0 基准配置，在离网/并网、规则运行/优化调度四种条件下进行压力月运行仿真。M2 只评价，不优化硬件。</p>
+            <h3>M2 全年四情景运行评价</h3>
+            <p>拿 M1 的 S0 基准配置，基于全年原生气象与全年 EV 用户事件流，生成 D0 自然需求画像和 D1 微网电价引导需求画像，并在离网/入网 × D0/D1 四种条件下进行全年运行评价。M2 只评价，不优化硬件。</p>
           </div>
           <button class="primary-btn" id="run-m2" disabled>运行 M2 四情景评价</button>
         </div>
 
-        <div class="module-layout">
+        <div class="module-layout m2-single-layout">
           <section class="input-stack">
             <article class="info-card input-card">
               <h4>运行场景设置</h4>
               <div class="form-grid">
-                <label>压力月份<select data-m2-input="monthMode"><option value="auto">自动选择压力月</option><option value="manual">手动指定月份</option></select></label>
-                <label>指定月份<select data-m2-input="monthIndex"><option value="0">1月</option><option value="1">2月</option><option value="2">3月</option><option value="3">4月</option><option value="4">5月</option><option value="5">6月</option><option value="6">7月</option><option value="7">8月</option><option value="8">9月</option><option value="9">10月</option><option value="10">11月</option><option value="11">12月</option></select></label>
+                <label>理论压力月识别方式<select data-m2-input="monthMode"><option value="auto">自动识别理论压力月</option><option value="manual">手动指定诊断月份</option></select></label>
+                <label>诊断月份<select data-m2-input="monthIndex"><option value="0">1月</option><option value="1">2月</option><option value="2">3月</option><option value="3">4月</option><option value="4">5月</option><option value="5">6月</option><option value="6">7月</option><option value="7">8月</option><option value="8">9月</option><option value="9">10月</option><option value="10">11月</option><option value="11">12月</option></select></label>
                 <label>变压器容量<input type="number" data-m2-input="transformerLimitKw" min="100" max="3000" step="50"></label>
                 <label>教师车比例<input type="number" data-m2-input="teacherRatio" min="0.30" max="0.95" step="0.05"></label>
                 <label>焦虑充电比例<input type="number" data-m2-input="anxietyRatio" min="0" max="1" step="0.05"></label>
@@ -243,7 +243,7 @@
               <h4>M2 与 M1 的区别</h4>
               <div class="compare-notes">
                 <div><strong>M1</strong><span>月度典型气象 + 标准周设计需求，用于生成 S0。</span></div>
-                <div><strong>M2</strong><span>原生 8760 气象 + 压力月车辆事件流，用于暴露风险。</span></div>
+                <div><strong>M2</strong><span>全年原生气象 + 全年 EV 事件流，生成 D0/D1 需求画像，四情景全年评价。</span></div>
               </div>
             </article>
           </section>
@@ -255,13 +255,50 @@
               <p id="m2-summary-meta">完成后显示四情景矩阵、SOC 曲线与调度/并网价值。</p>
             </article>
             <div class="readonly-strip" id="m2-s0-summary"></div>
+
+            <article class="info-card wide-card">
+              <h4>D0 / D1 全年需求画像</h4>
+              <div class="scenario-matrix" id="m2-demand-profiles"></div>
+            </article>
+
             <div class="scenario-matrix" id="m2-scenario-matrix"></div>
-            <article class="info-card"><h4>四情景核心指标对比</h4><div id="m2-comparison-table" class="table-wrap"></div></article>
+
+            <article class="info-card">
+              <h4>四情景核心指标对比</h4>
+              <div id="m2-comparison-table" class="table-wrap"></div>
+            </article>
             <section class="insight-grid">
-              <article class="info-card insight-card"><h4>四情景 SOC 曲线</h4><div class="chart-box" id="m2-soc-chart"></div></article>
-              <article class="info-card insight-card"><h4>离网缺口对比</h4><div class="chart-box" id="m2-unserved-chart"></div></article>
-              <article class="info-card insight-card"><h4>并网购电对比</h4><div class="chart-box" id="m2-grid-chart"></div></article>
-              <article class="info-card insight-card"><h4>价值判断</h4><div id="m2-value-cards" class="value-cards"></div></article>
+              <article class="info-card insight-card wide-card">
+                <h4>C1 离网 + D0 全年运行曲线</h4>
+                <p class="chart-note">EV 负荷、PV 出力、SOC、内部缺口、最终未满足与弃光。</p>
+                <div class="chart-box" id="m2-annual-chart-offgrid-rule"></div>
+              </article>
+
+              <article class="info-card insight-card wide-card">
+                <h4>C2 离网 + D1 全年运行曲线</h4>
+                <p class="chart-note">微网电价引导后，离网边界下全年运行状态。</p>
+                <div class="chart-box" id="m2-annual-chart-offgrid-dispatch"></div>
+              </article>
+
+              <article class="info-card insight-card wide-card">
+                <h4>C3 入网 + D0 全年运行曲线</h4>
+                <p class="chart-note">自然需求下，电网补足缺口后的全年运行状态。</p>
+                <div class="chart-box" id="m2-annual-chart-grid-rule"></div>
+              </article>
+
+              <article class="info-card insight-card wide-card">
+                <h4>C4 入网 + D1 全年运行曲线</h4>
+                <p class="chart-note">微网电价引导后，并网边界下全年运行状态。</p>
+                <div class="chart-box" id="m2-annual-chart-grid-dispatch"></div>
+              </article>
+
+              <article class="info-card insight-card wide-card">
+                <h4>价值判断</h4>
+                <div id="m2-value-cards" class="value-cards"></div>
+              </article>
+
+              <article class="info-card insight-card"><h4>理论压力月与实际最差月</h4><div id="m2-pressure-analysis" class="value-cards"></div></article>
+              <article class="info-card insight-card"><h4>风险诊断与 M3 交接</h4><div id="m2-risk-diagnosis" class="value-cards"></div></article>
             </section>
             <pre class="result-box compact-result" id="result-m2">M2 尚未运行。</pre>
           </section>

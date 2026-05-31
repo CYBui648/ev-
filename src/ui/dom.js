@@ -60,12 +60,18 @@ export const dom = {
     title: document.getElementById("m2-summary-title"),
     meta: document.getElementById("m2-summary-meta"),
     s0Summary: document.getElementById("m2-s0-summary"),
+    demandProfiles: document.getElementById("m2-demand-profiles"),
     scenarioMatrix: document.getElementById("m2-scenario-matrix"),
     comparisonTable: document.getElementById("m2-comparison-table"),
-    socChart: document.getElementById("m2-soc-chart"),
-    unservedChart: document.getElementById("m2-unserved-chart"),
-    gridChart: document.getElementById("m2-grid-chart"),
-    valueCards: document.getElementById("m2-value-cards")
+    annualCharts: {
+      offgrid_rule: document.getElementById("m2-annual-chart-offgrid-rule"),
+      offgrid_dispatch: document.getElementById("m2-annual-chart-offgrid-dispatch"),
+      grid_rule: document.getElementById("m2-annual-chart-grid-rule"),
+      grid_dispatch: document.getElementById("m2-annual-chart-grid-dispatch")
+    },
+    valueCards: document.getElementById("m2-value-cards"),
+    pressureAnalysis: document.getElementById("m2-pressure-analysis"),
+    riskDiagnosis: document.getElementById("m2-risk-diagnosis")
   },
   m3Summary: {
     title: document.getElementById("m3-summary-title"),

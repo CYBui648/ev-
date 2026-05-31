@@ -355,6 +355,32 @@ button { cursor: pointer; }
   grid-template-columns: 1fr;
 }
 
+.m2-single-layout {
+  grid-template-columns: 1fr;
+}
+
+.m2-single-layout .input-stack {
+  grid-template-columns: minmax(0, 1.7fr) minmax(280px, 0.8fr);
+  align-items: stretch;
+}
+
+.m2-single-layout .input-card .form-grid {
+  grid-template-columns: repeat(5, minmax(150px, 1fr));
+}
+
+.m2-single-layout .output-stack {
+  grid-template-columns: 1fr;
+}
+
+.m2-single-layout .scenario-matrix,
+.m2-single-layout .insight-grid {
+  grid-template-columns: 1fr;
+}
+
+.m2-single-layout .readonly-strip {
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+}
+
 .input-stack,
 .output-stack {
   display: grid;
@@ -676,12 +702,18 @@ button { cursor: pointer; }
   }
 
   .module-layout,
+  .m2-single-layout .input-stack,
   .report-board {
     grid-template-columns: 1fr;
   }
 
+  .m2-single-layout .input-card .form-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
   .flow-steps.wide,
   .readonly-strip,
+  .m2-single-layout .readonly-strip,
   .report-kpis {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
@@ -712,6 +744,8 @@ button { cursor: pointer; }
   .flow-steps.wide,
   .weather-status-grid,
   .readonly-strip,
+  .m2-single-layout .readonly-strip,
+  .m2-single-layout .input-card .form-grid,
   .report-kpis {
     grid-template-columns: 1fr;
   }

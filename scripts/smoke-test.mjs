@@ -130,6 +130,9 @@ assert.equal(s.grid_dispatch.summary.demandDispatchEnabled, true);
 // D0 情景不应启用户侧调度
 assert.equal(s.offgrid_rule.summary.demandDispatchEnabled, false);
 assert.equal(s.grid_rule.summary.demandDispatchEnabled, false);
+assert.equal(dp.priceGuided.dispatch.systemSignalBasis, "none_pv_only");
+assert.ok(s.grid_rule.summary.gridImportKwh <= s.grid_rule.summary.internalDeficitKwh + 1);
+assert.ok(s.grid_dispatch.summary.gridImportKwh <= s.grid_dispatch.summary.internalDeficitKwh + 1);
 
 // 第六轮验收：月度指标、压力月分析、风险诊断
 assert.equal(s.offgrid_rule.monthlyMetrics.length, 12);
@@ -172,7 +175,7 @@ assert.equal(h.version, "m2-annual-v1");
 assert.ok(h.baseConfig);
 assert.equal(typeof h.baseConfig.pvKw, "number");
 assert.equal(h.demandDispatch.dispatchedProfileKey, "D1_price_guided");
-assert.equal(h.demandDispatch.strategy, "microgrid_price_guided_pv_window");
+assert.equal(h.demandDispatch.strategy, "pv_driven_demand_reshaping");
 assert.ok(h.scenarioSummaries.offgridInitial);
 assert.ok(h.scenarioSummaries.offgridPriceGuided);
 assert.ok(h.scenarioSummaries.gridInitial);
@@ -221,6 +224,36 @@ const offgridRun = simulateEnergyScenario({
 });
 assert.equal(offgridRun.summary.gridConnected, false);
 assert.equal(offgridRun.summary.gridImportKwh, 0);
+
+const constrainedM2 = runM2ScenarioCompare({
+  ...context,
+  input: {
+    ...context.input,
+    m2: {
+      ...context.input.m2,
+      transformerLimitKw: 200
+    }
+  },
+  previousResults: {
+    m1: {
+      hardwarePlan: {
+        pvKw: 120,
+        storageKwh: 120,
+        pcsKw: 60,
+        n7kw: 20,
+        n30kw: 6
+      }
+    }
+  }
+});
+assert.ok(
+  constrainedM2.scenarios.offgrid_dispatch.summary.unservedEnergyKwh <=
+    constrainedM2.scenarios.offgrid_rule.summary.unservedEnergyKwh + 1
+);
+assert.ok(
+  constrainedM2.scenarios.grid_dispatch.summary.gridImportKwh <=
+    constrainedM2.scenarios.grid_dispatch.summary.internalDeficitKwh + 1
+);
 
 globalThis.self = { addEventListener() {} };
 await import("../src/worker/solver.worker.js");

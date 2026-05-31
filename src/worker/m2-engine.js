@@ -340,7 +340,11 @@ function buildAnnualIrradianceForM2(params, ticks, monthIndex) {
   });
 }
 
-function isMicrogridLowPriceWindow(tick, irradiance) {
+function isMicrogridLowPriceWindow(tick, irradiance, pvSignal = null) {
+  if (pvSignal?.isStrongPvWindow?.length) {
+    return Boolean(pvSignal.isStrongPvWindow[tick]);
+  }
+
   const hour = getTickHour(tick);
   const pv = toFiniteNumber(irradiance[tick], 0);
   return hour >= 10 && hour < 15 && pv > 0.05;
@@ -358,11 +362,11 @@ function calcPvAlignmentScore(loadCurve, irradiance) {
   return weightedIrradiance / totalEnergy;
 }
 
-function summarizeMicrogridWindowEnergy(loadCurve, irradiance) {
+function summarizeMicrogridWindowEnergy(loadCurve, irradiance, pvSignal = null) {
   return loadCurve.reduce((acc, kw, tick) => {
     const energy = toFiniteNumber(kw, 0) * TICK_HOURS;
 
-    if (isMicrogridLowPriceWindow(tick, irradiance)) {
+    if (isMicrogridLowPriceWindow(tick, irradiance, pvSignal)) {
       acc.lowPriceWindowKwh += energy;
     } else {
       acc.nonLowPriceWindowKwh += energy;
@@ -373,6 +377,63 @@ function summarizeMicrogridWindowEnergy(loadCurve, irradiance) {
     lowPriceWindowKwh: 0,
     nonLowPriceWindowKwh: 0
   });
+}
+
+function percentileLocal(values, p) {
+  if (!values.length) return 0;
+  const sorted = [...values].sort((a, b) => a - b);
+  const index = Math.min(
+    sorted.length - 1,
+    Math.max(0, Math.ceil((sorted.length - 1) * p))
+  );
+  return sorted[index];
+}
+
+function buildStrongPvSignal(irradiance) {
+  const isStrongPvWindow = Array(irradiance.length).fill(false);
+  const pvStrength = Array(irradiance.length).fill(0);
+  const dailyPeak = Array(irradiance.length).fill(0);
+  const dailyThreshold = Array(irradiance.length).fill(0);
+
+  for (let dayStart = 0; dayStart < irradiance.length; dayStart += TICKS_PER_DAY) {
+    const dayEnd = Math.min(dayStart + TICKS_PER_DAY, irradiance.length);
+
+    const dayValues = irradiance
+      .slice(dayStart, dayEnd)
+      .map((value) => Math.max(0, toFiniteNumber(value, 0)));
+
+    const peak = dayValues.reduce((max, value) => Math.max(max, value), 0);
+    const daylightValues = dayValues.filter((value) => value > 0.02);
+
+    if (peak <= 0.05 || daylightValues.length === 0) {
+      continue;
+    }
+
+    const p70 = percentileLocal(daylightValues, 0.70);
+
+    const threshold = Math.max(
+      0.05,
+      Math.min(peak * 0.80, Math.max(peak * 0.60, p70))
+    );
+
+    for (let localTick = 0; localTick < dayValues.length; localTick++) {
+      const tick = dayStart + localTick;
+      const pv = dayValues[localTick];
+
+      dailyPeak[tick] = peak;
+      dailyThreshold[tick] = threshold;
+      pvStrength[tick] = peak > 0 ? pv / peak : 0;
+      isStrongPvWindow[tick] = pv >= threshold;
+    }
+  }
+
+  return {
+    method: "daily_dynamic_strong_pv_window",
+    isStrongPvWindow,
+    pvStrength,
+    dailyPeak,
+    dailyThreshold
+  };
 }
 
 function summarizeTouEnergy(loadCurve, params) {
@@ -445,44 +506,56 @@ function isPriceResponsiveEvent(event) {
   return true;
 }
 
-function scorePriceGuidedTick({ tick, irradiance, loadCurve, params }) {
+function buildPvOnlyRank({ tick, irradiance, pvSignal = null }) {
   const hour = getTickHour(tick);
   const pv = toFiniteNumber(irradiance[tick], 0);
-  const existingLoad = toFiniteNumber(loadCurve[tick], 0);
 
-  const touPrice = params.climate?.gridTouPrice;
-  const price = getTouPrice(hour, touPrice);
+  const inStrongPvWindow = pvSignal?.isStrongPvWindow?.length
+    ? Boolean(pvSignal.isStrongPvWindow[tick])
+    : isMicrogridLowPriceWindow(tick, irradiance);
 
-  const valley = touPrice?.valley ?? 0.30;
-  const flat = touPrice?.flat ?? 0.70;
-  const peak = touPrice?.peak ?? 1.10;
-  const maxPrice = Math.max(valley, flat, peak, 1);
-
-  const microgridLowPriceBonus = isMicrogridLowPriceWindow(tick, irradiance)
-    ? 10
-    : 0;
-
-  const pvScore = pv * 80;
-
-  const touScore = (maxPrice - price) * 4;
-
-  const peakHourPenalty =
-    (hour >= 8 && hour < 10) || (hour >= 17 && hour < 20)
-      ? 3
-      : 0;
-
-  const localPeakPenalty = existingLoad * 0.01;
-
-  const noonDistancePenalty = Math.abs(hour - 12) * 0.03;
-
-  return (
-    microgridLowPriceBonus +
-    pvScore +
-    touScore -
-    peakHourPenalty -
-    localPeakPenalty -
-    noonDistancePenalty
+  const pvStrength = toFiniteNumber(
+    pvSignal?.pvStrength?.[tick],
+    pv
   );
+
+  const noonDistance = Math.abs(hour - 12);
+
+  return {
+    inStrongPvWindow: inStrongPvWindow ? 1 : 0,
+    pvStrength,
+    pv,
+    noonDistance,
+    tick
+  };
+}
+
+function comparePvOnlyRank(a, b) {
+  const rankA = a.rank;
+  const rankB = b.rank;
+
+  // 1. 优先进入动态强光伏窗口
+  if (rankA.inStrongPvWindow !== rankB.inStrongPvWindow) {
+    return rankB.inStrongPvWindow - rankA.inStrongPvWindow;
+  }
+
+  // 2. 当天相对光伏强度越高越优先
+  if (Math.abs(rankA.pvStrength - rankB.pvStrength) > 1e-6) {
+    return rankB.pvStrength - rankA.pvStrength;
+  }
+
+  // 3. 绝对光伏出力越高越优先
+  if (Math.abs(rankA.pv - rankB.pv) > 1e-6) {
+    return rankB.pv - rankA.pv;
+  }
+
+  // 4. 越接近中午越优先，作为兜底
+  if (rankA.noonDistance !== rankB.noonDistance) {
+    return rankA.noonDistance - rankB.noonDistance;
+  }
+
+  // 5. 稳定排序
+  return rankA.tick - rankB.tick;
 }
 
 function schedulePriceGuidedEvent({
@@ -493,7 +566,9 @@ function schedulePriceGuidedEvent({
   slowOccupancy,
   hardware,
   irradiance,
-  params
+  params,
+  systemSignal = null,
+  pvSignal = null
 }) {
   const isFast = event.tag === "FAST";
   const occupancy = isFast ? fastOccupancy : slowOccupancy;
@@ -519,20 +594,25 @@ function schedulePriceGuidedEvent({
 
   if (priceResponsive) {
     candidates.sort((a, b) => {
-      const scoreB = scorePriceGuidedTick({
-        tick: b,
-        irradiance,
-        loadCurve,
-        params
-      });
-      const scoreA = scorePriceGuidedTick({
+      const itemA = {
         tick: a,
-        irradiance,
-        loadCurve,
-        params
-      });
+        rank: buildPvOnlyRank({
+          tick: a,
+          irradiance,
+          pvSignal
+        })
+      };
 
-      return scoreB - scoreA || a - b;
+      const itemB = {
+        tick: b,
+        rank: buildPvOnlyRank({
+          tick: b,
+          irradiance,
+          pvSignal
+        })
+      };
+
+      return comparePvOnlyRank(itemA, itemB);
     });
   } else {
     candidates.sort((a, b) => a - b);
@@ -593,9 +673,12 @@ function buildPriceGuidedDemandProfileFromEvents({
   demand,
   hardware,
   params,
-  irradiance
+  irradiance,
+  systemSignal = null
 }) {
   const totalTicks = initialProfile.ticks;
+
+  const pvSignal = buildStrongPvSignal(irradiance);
 
   const loadCurve = Array(totalTicks).fill(0);
   const fastOccupancy = Array(totalTicks).fill(0);
@@ -634,7 +717,9 @@ function buildPriceGuidedDemandProfileFromEvents({
       slowOccupancy,
       hardware,
       irradiance,
-      params
+      params,
+      systemSignal,
+      pvSignal
     });
 
     deliveredEnergyKwh += result.deliveredKwh;
@@ -650,7 +735,9 @@ function buildPriceGuidedDemandProfileFromEvents({
       slowOccupancy,
       hardware,
       irradiance,
-      params
+      params,
+      systemSignal,
+      pvSignal
     });
 
     deliveredEnergyKwh += result.deliveredKwh;
@@ -660,6 +747,22 @@ function buildPriceGuidedDemandProfileFromEvents({
     if (result.shiftedEvent) shiftedEventCount += 1;
   });
 
+  const baseAnnualEnergyKwh = sumLoadCurveKwh(initialProfile.loadCurve);
+  const unnormalizedAnnualEnergyKwh = sumLoadCurveKwh(loadCurve);
+  const energyNormalizationFactor = unnormalizedAnnualEnergyKwh > 0
+    ? baseAnnualEnergyKwh / unnormalizedAnnualEnergyKwh
+    : 1;
+
+  if (Number.isFinite(energyNormalizationFactor) && Math.abs(energyNormalizationFactor - 1) > 1e-6) {
+    for (let tick = 0; tick < loadCurve.length; tick++) {
+      loadCurve[tick] *= energyNormalizationFactor;
+    }
+
+    deliveredEnergyKwh *= energyNormalizationFactor;
+    shiftedEnergyKwh *= energyNormalizationFactor;
+    unmetByDispatchKwh *= energyNormalizationFactor;
+  }
+
   const annualEnergyKwh = sumLoadCurveKwh(loadCurve);
   const peakLoadKw = getPeakLoadKw(loadCurve);
   const monthlyDemand = summarizeMonthlyDemand(loadCurve);
@@ -667,8 +770,8 @@ function buildPriceGuidedDemandProfileFromEvents({
   const basePvAlignment = calcPvAlignmentScore(initialProfile.loadCurve, irradiance);
   const nextPvAlignment = calcPvAlignmentScore(loadCurve, irradiance);
 
-  const baseWindowEnergy = summarizeMicrogridWindowEnergy(initialProfile.loadCurve, irradiance);
-  const nextWindowEnergy = summarizeMicrogridWindowEnergy(loadCurve, irradiance);
+  const baseWindowEnergy = summarizeMicrogridWindowEnergy(initialProfile.loadCurve, irradiance, pvSignal);
+  const nextWindowEnergy = summarizeMicrogridWindowEnergy(loadCurve, irradiance, pvSignal);
 
   const baseTou = summarizeTouEnergy(initialProfile.loadCurve, params);
   const nextTou = summarizeTouEnergy(loadCurve, params);
@@ -677,9 +780,9 @@ function buildPriceGuidedDemandProfileFromEvents({
     ...initialProfile,
 
     key: "D1_price_guided",
-    label: "微网电价引导后的全年需求画像",
+    label: "光伏驱动需求重排后的全年需求画像",
     description:
-      "基于光伏强出力时段设置微网低价引导窗口，将可调慢充需求延后至光伏友好时段，以实现削峰和提升 PV 消纳。",
+      "识别逐日光伏强出力时段，将可调慢充需求优先排入强光伏窗口；不直接考虑 SOC、缺口、弃光、外部电价，系统影响由后续四情景仿真评价。",
 
     loadCurve,
     rawLoadCurve: [...initialProfile.rawLoadCurve],
@@ -697,7 +800,12 @@ function buildPriceGuidedDemandProfileFromEvents({
 
     dispatch: {
       enabled: true,
-      strategy: "microgrid_price_guided_pv_window",
+      strategy: "pv_driven_demand_reshaping",
+      systemSignalBasis: "none_pv_only",
+
+      strongPvWindowMethod: pvSignal.method,
+      strongPvWindowNote:
+        "微网低价窗口由逐日光伏强出力时段动态识别，不再固定为 10:00—15:00。",
 
       fixedEventCount: fixedEvents.length,
       responsiveEventCount: responsiveEvents.length,
@@ -705,6 +813,7 @@ function buildPriceGuidedDemandProfileFromEvents({
 
       deliveredEnergyKwh: round(deliveredEnergyKwh, 1),
       unmetByDispatchKwh: round(unmetByDispatchKwh, 1),
+      energyNormalizationFactor: round(energyNormalizationFactor, 5),
 
       shiftedEnergyKwh: round(shiftedEnergyKwh, 1),
       peakReductionKw: round(initialProfile.peakLoadKw - peakLoadKw, 1),
@@ -722,7 +831,7 @@ function buildPriceGuidedDemandProfileFromEvents({
       valleyShiftKwh: round(nextTou.valleyKwh - baseTou.valleyKwh, 1),
 
       note:
-        "D1 采用统一微网电价引导调度：光伏强出力时段设为低价窗口，引导慢充长停留用户延后充电；该 D1 同时用于离网与并网情景。"
+        "D1 为光伏驱动的需求重排画像：识别逐日光伏强出力时段，将可调慢充需求优先排入强光伏窗口；不直接考虑 SOC、缺口、弃光、外部电价。系统影响由后续四情景仿真评价。"
     }
   };
 }
@@ -1211,12 +1320,21 @@ export function runM2ScenarioCompare(context) {
     predictedPressureMonthIndex
   );
 
+  const baselineOffgridRun = simulateEnergyScenario({
+    hardware,
+    loadCurve: D0.loadCurve,
+    irradiance: annualIrradiance,
+    params,
+    scenarioKey: "offgrid_rule"
+  });
+
   const D1 = buildPriceGuidedDemandProfileFromEvents({
     initialProfile: D0,
     demand,
     hardware,
     params,
-    irradiance: annualIrradiance
+    irradiance: annualIrradiance,
+    systemSignal: null
   });
 
   const demandProfiles = {
