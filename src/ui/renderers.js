@@ -252,16 +252,29 @@ function renderJsonResults(state) {
           scenarioKey,
           {
             scenarioLabel: value.scenarioLabel,
+            optimizationLabel: value.optimizationLabel,
+            feasibleCount: value.feasibleCount,
+            demandProfile: value.demandProfile,
             recommendedConfig: value.recommendedConfig ? {
               hardwarePlan: value.recommendedConfig.hardwarePlan,
+              deltas: value.recommendedConfig.deltas,
+              feasibility: value.recommendedConfig.feasibility,
+              validationMetrics: value.recommendedConfig.validationMetrics,
               riskMetrics: value.recommendedConfig.riskMetrics,
               gridMetrics: value.recommendedConfig.gridMetrics,
-              costMetrics: value.recommendedConfig.costMetrics
+              energyMetrics: value.recommendedConfig.energyMetrics,
+              costMetrics: value.recommendedConfig.costMetrics,
+              searchMeta: value.recommendedConfig.searchMeta
             } : null
           }
         ])
       ) : undefined,
-      comparison: stage.result.comparison
+      comparison: stage.result.comparison,
+      uiPayload: stage.result.uiPayload ? {
+        scenarioCards: stage.result.uiPayload.scenarioCards,
+        comparisonRows: stage.result.uiPayload.comparisonRows,
+        recommendationCards: stage.result.uiPayload.recommendationCards
+      } : undefined
     };
     target.textContent = JSON.stringify(slim, null, 2);
   });
@@ -298,7 +311,11 @@ function renderTopSummary(state) {
   const m2 = state.stages.m2.result;
   const m3 = state.stages.m3.result;
   const offgridRule = getScenarioSummary(m2, "offgrid_rule");
-  const bestKey = m3?.comparison?.recommendedForEngineering || m3?.comparison?.lowestTotalCostScenario;
+  const bestKey =
+    m3?.comparison?.recommendedByCondition?.lowestAnnualCost?.scenarioKey ||
+    m3?.comparison?.recommendedForEngineering ||
+    m3?.comparison?.lowestAnnualCostScenario ||
+    m3?.comparison?.lowestTotalCostScenario;
 
   setText(dom.kpis.status, state.stages[state.activeStage]?.status === "running" ? "运行中" : "就绪");
   setText(dom.kpis.stage, state.activeStage.toUpperCase());
@@ -317,19 +334,19 @@ function renderTopSummary(state) {
     setText(dom.report.riskMonths, label);
   } else if (m2) {
     setText(dom.report.headline, "S0 四情景运行评价已完成");
-    setText(dom.report.subtitle, "M2 已暴露离网缺口、并网购电与调度价值，下一步进入 M3 分情景优化。");
+    setText(dom.report.subtitle, "M2 已完成 S0 在四情景下的全年运行评价，下一步进入 M3 做情景化配置优化。");
     setText(dom.report.action, "运行 M3");
     setText(dom.report.actionNote, "生成 C1-C4");
     setText(dom.report.riskMonths, offgridRule.unservedEnergyKwh > 0 ? "离网缺口" : "待比较");
   } else if (m1) {
     setText(dom.report.headline, "S0 离网基准配置已生成");
-    setText(dom.report.subtitle, "M1 已完成标准周设计需求与基础硬件配置，下一步用压力月事件流进行四情景评价。");
+    setText(dom.report.subtitle, "M1 已完成标准周设计需求与 S0 基准硬件配置，下一步进入 M2 做全年四情景评价。");
     setText(dom.report.action, "运行 M2");
     setText(dom.report.actionNote, "评价 S0");
     setText(dom.report.riskMonths, "待 M2 识别");
   } else {
     setText(dom.report.headline, "等待 M1 生成 S0 基准配置");
-    setText(dom.report.subtitle, "完成三阶段计算后，这里会汇总基准配置、四情景风险与最终情景化推荐。");
+    setText(dom.report.subtitle, "完成三阶段计算后，这里会汇总 S0 基准配置、四情景运行表现与最终情景化推荐。");
     setText(dom.report.action, "运行 M1");
     setText(dom.report.actionNote, "生成 S0");
     setText(dom.report.riskMonths, "--");
@@ -608,23 +625,138 @@ function getOptimum(result, key) {
   return result?.scenarioOptimums?.[key]?.recommendedConfig || null;
 }
 
+function getM3ScenarioCards(result) {
+  const cards = result?.uiPayload?.scenarioCards;
+  if (Array.isArray(cards) && cards.length) return cards;
+
+  return SCENARIOS.map((scenario) => {
+    const optimum = result?.scenarioOptimums?.[scenario.key] || {};
+    const recommended = optimum.recommendedConfig || {};
+    const cost = recommended.costMetrics || {};
+    const validation = recommended.validationMetrics || recommended.riskMetrics || {};
+    const grid = recommended.gridMetrics || {};
+    const energy = recommended.energyMetrics || {};
+
+    return {
+      scenarioKey: scenario.key,
+      title: scenario.label,
+      optimizationLabel: optimum.optimizationLabel || "情景最优配置",
+      feasible: Boolean(recommended.feasibility?.feasible),
+      feasibleCount: optimum.feasibleCount || 0,
+      candidateCount: optimum.evaluatedCandidates?.length || 0,
+      demandProfile: optimum.demandProfile || null,
+      hardwarePlan: recommended.hardwarePlan || {},
+      deltas: recommended.deltas || {},
+      savingVsBaseline: result?.comparison?.scenarioSavingsVsBaseline?.[scenario.key] || null,
+      keyMetrics: {
+        annualTotalCostWan: cost.annualTotalCostWan ?? cost.totalCostProxyWan,
+        capexWan: cost.capexWan,
+        extraCapexWan: cost.extraCapexWan,
+        gridCostWan: cost.gridCostWan,
+        serviceRate: validation.serviceRate,
+        unservedEnergyKwh: validation.unservedEnergyKwh,
+        deficitHours: validation.deficitHours,
+        socMinPct: validation.socMinPct,
+        gridImportKwh: grid.gridImportKwh,
+        peakGridKw: grid.peakGridKw,
+        gridCostYuan: grid.gridCostYuan,
+        curtailmentRatePct: energy.curtailmentRatePct
+      },
+      feasibility: recommended.feasibility || null,
+      searchMeta: recommended.searchMeta || null,
+      note: recommended.feasibility?.feasible
+        ? "该方案为当前候选集中满足约束后的年综合成本最低配置。"
+        : "该方案未完全满足约束，仅作为当前候选集中的最优兜底结果。"
+    };
+  });
+}
+
+function getM3Card(result, scenarioKey) {
+  return getM3ScenarioCards(result).find((card) => card.scenarioKey === scenarioKey) || null;
+}
+
+function getM3ComparisonRows(result) {
+  const rows = result?.uiPayload?.comparisonRows;
+  if (Array.isArray(rows) && rows.length) return rows;
+
+  return getM3ScenarioCards(result).map((card) => {
+    const metrics = card.keyMetrics || {};
+    const saving = card.savingVsBaseline || {};
+    return {
+      scenarioKey: card.scenarioKey,
+      scenarioLabel: card.title,
+      feasible: card.feasible,
+      capexWan: metrics.capexWan,
+      annualTotalCostWan: metrics.annualTotalCostWan,
+      extraCapexWan: metrics.extraCapexWan,
+      capexSavingWan: saving.capexSavingWan,
+      pvKw: card.hardwarePlan?.pvKw,
+      storageKwh: card.hardwarePlan?.storageKwh,
+      pcsKw: card.hardwarePlan?.pcsKw,
+      n7kw: card.hardwarePlan?.n7kw,
+      n30kw: card.hardwarePlan?.n30kw,
+      pvReductionKw: saving.pvReductionKw,
+      storageReductionKwh: saving.storageReductionKwh,
+      pcsReductionKw: saving.pcsReductionKw,
+      n7Reduction: saving.n7Reduction,
+      n30Reduction: saving.n30Reduction,
+      serviceRate: metrics.serviceRate,
+      unservedEnergyKwh: metrics.unservedEnergyKwh,
+      socMinPct: metrics.socMinPct,
+      gridImportKwh: metrics.gridImportKwh,
+      gridCostYuan: metrics.gridCostYuan,
+      curtailmentRatePct: metrics.curtailmentRatePct
+    };
+  });
+}
+
+function getM3RecommendationCards(result) {
+  const cards = result?.uiPayload?.recommendationCards;
+  if (Array.isArray(cards) && cards.length) return cards;
+
+  const recommended = result?.comparison?.recommendedByCondition || {};
+  return [
+    recommended.noGrid_noDispatch,
+    recommended.noGrid_withDispatch,
+    recommended.grid_noDispatch,
+    recommended.grid_withDispatch,
+    recommended.lowestAnnualCost
+  ].filter(Boolean);
+}
+
+function scenarioShort(key) {
+  return SCENARIOS.find((item) => item.key === key)?.short || "--";
+}
+
+function scenarioLabelByKey(key) {
+  return SCENARIOS.find((item) => item.key === key)?.label || key || "--";
+}
+
 function optimumCard(result, scenario) {
-  const item = getOptimum(result, scenario.key);
-  const plan = item?.hardwarePlan || {};
-  const risk = item?.riskMetrics || {};
-  const grid = item?.gridMetrics || {};
-  const cost = item?.costMetrics || {};
+  const card = getM3Card(result, scenario.key);
+  const plan = card?.hardwarePlan || {};
+  const metrics = card?.keyMetrics || {};
+  const saving = card?.savingVsBaseline || {};
+  const feasible = Boolean(card?.feasible);
+
   return `
-    <article class="scenario-card optimum ${scenario.key}">
-      <div class="scenario-head"><span>${scenario.short}</span><strong>${scenario.label}</strong><small>情景最优配置</small></div>
+    <article class="scenario-card optimum ${scenario.key} ${feasible ? "feasible" : "infeasible"}">
+      <div class="scenario-head">
+        <span>${scenario.short}</span>
+        <strong>${scenario.label}</strong>
+        <small>${feasible ? "最小可行配置" : "兜底候选配置"}</small>
+      </div>
       <div class="scenario-metrics">
         <div><span>PV</span><strong>${n(plan.pvKw, 1)} kW</strong></div>
         <div><span>储能</span><strong>${n(plan.storageKwh, 1)} kWh</strong></div>
         <div><span>PCS</span><strong>${n(plan.pcsKw, 1)} kW</strong></div>
-        <div><span>追加投资</span><strong>${n(cost.extraCapexWan, 1)} 万元</strong></div>
-        <div><span>未满足电量</span><strong>${n(risk.unservedEnergyKwh, 1)} kWh</strong></div>
-        <div><span>电网依赖</span><strong>${scenario.key.startsWith("grid_") ? pct(grid.gridDependencyRate, 1) : "--"}</strong></div>
+        <div><span>慢 / 快充</span><strong>${plan.n7kw ?? "--"} / ${plan.n30kw ?? "--"}</strong></div>
+        <div><span>年综合成本</span><strong>${n(metrics.annualTotalCostWan, 1)} 万元</strong></div>
+        <div><span>相对 S0 节省</span><strong>${n(saving.capexSavingWan, 1)} 万元</strong></div>
+        <div><span>服务满足率</span><strong>${pct(metrics.serviceRate, 1)}</strong></div>
+        <div><span>最低 SOC</span><strong>${n(metrics.socMinPct, 1)}%</strong></div>
       </div>
+      <p class="scenario-note">${card?.note || ""}</p>
     </article>
   `;
 }
@@ -637,20 +769,20 @@ function renderM3(state) {
     el.riskSummary.innerHTML = SCENARIOS.map((scenario) => {
       const summary = getScenarioSummary(m2, scenario.key);
       const main = scenario.key.startsWith("grid_")
-        ? `购电 ${n(summary.gridImportKwh, 1)} kWh，成本 ${n(summary.gridCostYuan, 1)} 元`
-        : `缺口 ${n(summary.unservedEnergyKwh, 1)} kWh，最低 SOC ${n(summary.socMinPct, 1)}%`;
+        ? `服务率 ${pct(summary.serviceRate, 1)}，购电 ${n(summary.gridImportKwh, 1)} kWh，成本 ${n(summary.gridCostYuan, 1)} 元`
+        : `服务率 ${pct(summary.serviceRate, 1)}，未满足 ${n(summary.unservedEnergyKwh, 1)} kWh，最低 SOC ${n(summary.socMinPct, 1)}%`;
       return `<div><span>${scenario.label}</span><strong>${main}</strong></div>`;
     }).join("");
   } else {
-    el.riskSummary.innerHTML = `<div class="empty-note">请先运行 M2 形成四情景风险摘要。</div>`;
+    el.riskSummary.innerHTML = `<div class="empty-note">请先运行 M2 形成四情景全年运行摘要。</div>`;
   }
 
   if (!result) {
     setText(el.title, "等待 M3 运行");
-    setText(el.meta, "完成后输出四套情景最优配置与工程推荐。");
+    setText(el.meta, "完成后输出 C1-C4 四套最小可行配置、相对 S0 削减量与按工程条件推荐。");
     el.optimumCards.innerHTML = SCENARIOS.map((scenario) => optimumCard(null, scenario)).join("");
-    el.comparisonTable.innerHTML = `<div class="empty-note">运行 M3 后展示 C1-C4 横向比较。</div>`;
-    el.recommendation.innerHTML = `<div class="empty-note">运行 M3 后生成离网、并网与综合工程推荐。</div>`;
+    el.comparisonTable.innerHTML = `<div class="empty-note">运行 M3 后展示 C1-C4 配置、成本、削减量与可行性横向比较。</div>`;
+    el.recommendation.innerHTML = `<div class="empty-note">运行 M3 后按"是否接电网 / 是否接受调度 / 最低年综合成本"生成推荐。</div>`;
     resetChart(el.capexChart, "运行 M3 后展示投资成本对比。");
     resetChart(el.capacityChart, "运行 M3 后展示设备容量对比。");
     resetChart(el.costChart, "运行 M3 后展示综合成本对比。");
@@ -658,47 +790,89 @@ function renderM3(state) {
   }
 
   setText(el.title, "C1-C4 四情景配置优化已完成");
-  setText(el.meta, `候选配置 ${result.candidateCount || result.summary?.candidateCount || 0} 组 · 四情景分别筛选最优`);
+  setText(
+    el.meta,
+    `候选配置 ${result.candidateCount || result.summary?.candidateCount || 0} 组 · 先满足全年约束，再按年综合成本筛选 C1-C4`
+  );
   el.optimumCards.innerHTML = SCENARIOS.map((scenario) => optimumCard(result, scenario)).join("");
 
+  const comparisonRows = getM3ComparisonRows(result);
+  const rowByKey = Object.fromEntries(comparisonRows.map((row) => [row.scenarioKey, row]));
+
   const rows = [
-    ["PV 容量", ...SCENARIOS.map((s) => `${n(getOptimum(result, s.key)?.hardwarePlan?.pvKw, 1)} kW`)],
-    ["储能容量", ...SCENARIOS.map((s) => `${n(getOptimum(result, s.key)?.hardwarePlan?.storageKwh, 1)} kWh`)],
-    ["PCS 功率", ...SCENARIOS.map((s) => `${n(getOptimum(result, s.key)?.hardwarePlan?.pcsKw, 1)} kW`)],
-    ["追加投资", ...SCENARIOS.map((s) => `${n(getOptimum(result, s.key)?.costMetrics?.extraCapexWan, 1)} 万元`)],
-    ["综合成本", ...SCENARIOS.map((s) => `${n(getOptimum(result, s.key)?.costMetrics?.totalCostProxyWan, 1)} 万元`)],
-    ["未满足电量", ...SCENARIOS.map((s) => `${n(getOptimum(result, s.key)?.riskMetrics?.unservedEnergyKwh, 1)} kWh`)],
-    ["服务满足率", ...SCENARIOS.map((s) => pct(getOptimum(result, s.key)?.riskMetrics?.serviceRate, 1))],
-    ["电网依赖率", ...SCENARIOS.map((s) => s.key.startsWith("grid_") ? pct(getOptimum(result, s.key)?.gridMetrics?.gridDependencyRate, 1) : "--")]
+    ["可行性", ...SCENARIOS.map((s) => rowByKey[s.key]?.feasible ? "可行" : "兜底")],
+    ["PV 容量", ...SCENARIOS.map((s) => `${n(rowByKey[s.key]?.pvKw, 1)} kW`)],
+    ["储能容量", ...SCENARIOS.map((s) => `${n(rowByKey[s.key]?.storageKwh, 1)} kWh`)],
+    ["PCS 功率", ...SCENARIOS.map((s) => `${n(rowByKey[s.key]?.pcsKw, 1)} kW`)],
+    ["慢 / 快充", ...SCENARIOS.map((s) => `${rowByKey[s.key]?.n7kw ?? "--"} / ${rowByKey[s.key]?.n30kw ?? "--"}`)],
+    ["相对 S0 投资节省", ...SCENARIOS.map((s) => `${n(rowByKey[s.key]?.capexSavingWan, 1)} 万元`)],
+    ["年综合成本", ...SCENARIOS.map((s) => `${n(rowByKey[s.key]?.annualTotalCostWan, 1)} 万元`)],
+    ["削减 PV", ...SCENARIOS.map((s) => `${n(rowByKey[s.key]?.pvReductionKw, 1)} kW`)],
+    ["削减储能", ...SCENARIOS.map((s) => `${n(rowByKey[s.key]?.storageReductionKwh, 1)} kWh`)],
+    ["削减 PCS", ...SCENARIOS.map((s) => `${n(rowByKey[s.key]?.pcsReductionKw, 1)} kW`)],
+    ["削减慢 / 快充", ...SCENARIOS.map((s) => `${n(rowByKey[s.key]?.n7Reduction, 0)} / ${n(rowByKey[s.key]?.n30Reduction, 0)}`)],
+    ["服务满足率", ...SCENARIOS.map((s) => pct(rowByKey[s.key]?.serviceRate, 1))],
+    ["未满足电量", ...SCENARIOS.map((s) => `${n(rowByKey[s.key]?.unservedEnergyKwh, 1)} kWh`)],
+    ["最低 SOC", ...SCENARIOS.map((s) => `${n(rowByKey[s.key]?.socMinPct, 1)}%`)],
+    ["购电量", ...SCENARIOS.map((s) => `${n(rowByKey[s.key]?.gridImportKwh, 1)} kWh`)],
+    ["购电成本", ...SCENARIOS.map((s) => `${n(rowByKey[s.key]?.gridCostYuan, 1)} 元`)],
+    ["弃光率", ...SCENARIOS.map((s) => `${n(rowByKey[s.key]?.curtailmentRatePct, 1)}%`)]
   ];
-  el.comparisonTable.innerHTML = tableHtml(["指标", ...SCENARIOS.map((s) => `${s.short} ${s.label}`)], rows);
+
+  el.comparisonTable.innerHTML = tableHtml(
+    ["指标", ...SCENARIOS.map((s) => `${s.short} ${s.label}`)],
+    rows
+  );
 
   const labels = SCENARIOS.map((scenario) => scenario.short);
-  renderChart(el.capexChart, barOption(labels, [{
-    name: "追加投资",
-    data: SCENARIOS.map((scenario) => getOptimum(result, scenario.key)?.costMetrics?.extraCapexWan || 0)
-  }], "万元"), "运行 M3 后展示投资成本对比。");
+
+  renderChart(el.capexChart, barOption(labels, [
+    {
+      name: "相对 S0 投资节省",
+      data: SCENARIOS.map((scenario) => rowByKey[scenario.key]?.capexSavingWan || 0)
+    },
+    {
+      name: "一次投资",
+      data: SCENARIOS.map((scenario) => rowByKey[scenario.key]?.capexWan || 0)
+    }
+  ], "万元"), "运行 M3 后展示投资节省与一次投资对比。");
 
   renderChart(el.capacityChart, barOption(labels, [
-    { name: "PV", data: SCENARIOS.map((scenario) => getOptimum(result, scenario.key)?.hardwarePlan?.pvKw || 0) },
-    { name: "储能", data: SCENARIOS.map((scenario) => getOptimum(result, scenario.key)?.hardwarePlan?.storageKwh || 0) },
-    { name: "PCS", data: SCENARIOS.map((scenario) => getOptimum(result, scenario.key)?.hardwarePlan?.pcsKw || 0) }
+    { name: "PV", data: SCENARIOS.map((scenario) => rowByKey[scenario.key]?.pvKw || 0) },
+    { name: "储能", data: SCENARIOS.map((scenario) => rowByKey[scenario.key]?.storageKwh || 0) },
+    { name: "PCS", data: SCENARIOS.map((scenario) => rowByKey[scenario.key]?.pcsKw || 0) }
   ], "kW / kWh"), "运行 M3 后展示设备容量对比。");
 
-  renderChart(el.costChart, barOption(labels, [{
-    name: "综合成本",
-    data: SCENARIOS.map((scenario) => getOptimum(result, scenario.key)?.costMetrics?.totalCostProxyWan || 0)
-  }], "万元"), "运行 M3 后展示综合成本对比。");
+  renderChart(el.costChart, barOption(labels, [
+    {
+      name: "年综合成本",
+      data: SCENARIOS.map((scenario) => rowByKey[scenario.key]?.annualTotalCostWan || 0)
+    },
+    {
+      name: "购电成本",
+      data: SCENARIOS.map((scenario) => {
+        const row = rowByKey[scenario.key];
+        return row?.gridCostYuan != null ? row.gridCostYuan / 10000 : 0;
+      })
+    }
+  ], "万元/年"), "运行 M3 后展示年综合成本对比。");
 
-  const comparison = result.comparison || {};
-  const engineeringKey = comparison.recommendedForEngineering || comparison.lowestTotalCostScenario || "grid_dispatch";
-  const engineering = SCENARIOS.find((scenario) => scenario.key === engineeringKey);
-  el.recommendation.innerHTML = `
-    <div class="recommendation-row"><span>离网优先</span><strong>C2 离网-优化调度</strong><small>相比 C1，关注硬件冗余节省与缺口控制。</small></div>
-    <div class="recommendation-row"><span>并网优先</span><strong>C4 并网-优化调度</strong><small>相比 C3，关注购电成本与峰值功率下降。</small></div>
-    <div class="recommendation-row primary"><span>综合工程</span><strong>${engineering?.short || "--"} ${engineering?.label || "--"}</strong><small>由综合成本、可靠性和电网依赖共同排序得到。</small></div>
-    <div class="recommendation-row"><span>调度价值</span><strong>离网节省 ${n(comparison.dispatchValueOffgrid?.capexSavingWan, 1)} 万元</strong><small>并网综合成本节省 ${n(comparison.dispatchValueGrid?.totalCostSavingWan, 1)} 万元。</small></div>
-  `;
+  const recommendationCards = getM3RecommendationCards(result);
+
+  el.recommendation.innerHTML = recommendationCards.length
+    ? recommendationCards.map((item, index) => `
+        <div class="recommendation-row ${index === recommendationCards.length - 1 ? "primary" : ""}">
+          <span>${item.label || "推荐方案"}</span>
+          <strong>${scenarioShort(item.scenarioKey)} ${scenarioLabelByKey(item.scenarioKey)}</strong>
+          <small>
+            ${item.feasible ? "可行" : "兜底"} ·
+            年综合成本 ${n(item.annualTotalCostWan, 1)} 万元 ·
+            服务率 ${pct(item.serviceRate, 1)} ·
+            最低 SOC ${n(item.socMinPct, 1)}%
+          </small>
+        </div>
+      `).join("")
+    : `<div class="empty-note">暂无推荐结果。</div>`;
 }
 
 export function renderApp(state) {
