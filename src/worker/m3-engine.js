@@ -101,16 +101,19 @@ function buildPileValues(baseCount, factors) {
 
 function hasSizingPressure(m2, targets = []) {
   const hints = m2?.handoffToM3?.sizingHints || m2?.sizingHints || [];
+
   return hints.some((hint) => {
-    if (!targets.length) return hint.priority === "high";
-    return targets.includes(hint.target);
+    const priorityOk = hint.priority === "high";
+    const targetOk = !targets.length || targets.includes(hint.target);
+    return priorityOk && targetOk;
   });
 }
 
 const SOC_MIN_PCT = 5;
 const OFFGRID_SERVICE_RATE_MIN = 0.99;
 const GRID_SERVICE_RATE_MIN = 0.995;
-const UNSERVED_TOLERANCE_KWH = 1;
+const UNSERVED_RATE_TOLERANCE = 0.001;
+const UNSERVED_TOLERANCE_MIN_KWH = 1;
 
 function toFiniteNumber(value, fallback = 0) {
   const number = Number(value);
@@ -245,17 +248,23 @@ function feasibilityForScenario(scenarioKey, summary, params) {
   const isOffgrid = scenarioKey.startsWith("offgrid_");
   const serviceRate = toFiniteNumber(summary.serviceRate, 0);
   const unservedEnergyKwh = toFiniteNumber(summary.unservedEnergyKwh, 0);
+  const demandKwh = toFiniteNumber(summary.demandKwh, 0);
   const socMinPct = toFiniteNumber(summary.socMinPct, 0);
   const gridImportKwh = toFiniteNumber(summary.gridImportKwh, 0);
   const peakGridKw = toFiniteNumber(summary.peakGridKw, 0);
   const transformerLimitKw = getTransformerLimitKw(params);
+
+  const unservedToleranceKwh = Math.max(
+    UNSERVED_TOLERANCE_MIN_KWH,
+    demandKwh * UNSERVED_RATE_TOLERANCE
+  );
 
   const serviceRateMin = isOffgrid
     ? OFFGRID_SERVICE_RATE_MIN
     : GRID_SERVICE_RATE_MIN;
 
   const serviceOk = serviceRate >= serviceRateMin;
-  const unservedOk = unservedEnergyKwh <= UNSERVED_TOLERANCE_KWH;
+  const unservedOk = unservedEnergyKwh <= unservedToleranceKwh;
   const socOk = socMinPct >= SOC_MIN_PCT;
 
   const gridImportViolationKwh = isOffgrid
@@ -273,7 +282,7 @@ function feasibilityForScenario(scenarioKey, summary, params) {
   const serviceShortfall = Math.max(0, serviceRateMin - serviceRate);
   const unservedViolationKwh = Math.max(
     0,
-    unservedEnergyKwh - UNSERVED_TOLERANCE_KWH
+    unservedEnergyKwh - unservedToleranceKwh
   );
   const socViolationPct = Math.max(0, SOC_MIN_PCT - socMinPct);
 
@@ -294,7 +303,7 @@ function feasibilityForScenario(scenarioKey, summary, params) {
 
     serviceRateMin,
     socMinPctMin: SOC_MIN_PCT,
-    unservedToleranceKwh: UNSERVED_TOLERANCE_KWH,
+    unservedToleranceKwh: round(unservedToleranceKwh, 1),
     transformerLimitKw: Number.isFinite(transformerLimitKw)
       ? transformerLimitKw
       : null,
