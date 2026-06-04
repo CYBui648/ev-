@@ -318,6 +318,38 @@ function toFiniteNumber(value, fallback = 0) {
   return Number.isFinite(number) ? number : fallback;
 }
 
+function safeRatio(numerator, denominator) {
+  const value = toFiniteNumber(numerator, 0);
+  const base = toFiniteNumber(denominator, 0);
+  return Math.abs(base) > 1e-9 ? value / base : 0;
+}
+
+function withEndToEndSummary(summary, profile) {
+  const energyDemandKwh = toFiniteNumber(summary.demandKwh, 0);
+  const rawDemandKwh = toFiniteNumber(profile.rawEnergyKwh, energyDemandKwh);
+  const energyUnservedKwh = toFiniteNumber(summary.unservedEnergyKwh, 0);
+  const pileUnservedKwh = Math.max(0, rawDemandKwh - energyDemandKwh);
+  const endToEndUnservedKwh = pileUnservedKwh + energyUnservedKwh;
+  const endToEndDeliveredKwh = Math.max(0, rawDemandKwh - endToEndUnservedKwh);
+  const endToEndServiceRate = rawDemandKwh > 0
+    ? endToEndDeliveredKwh / rawDemandKwh
+    : 1;
+
+  return {
+    ...summary,
+    rawDemandKwh: round(rawDemandKwh, 1),
+    energyDemandKwh: round(energyDemandKwh, 1),
+    pileUnservedKwh: round(pileUnservedKwh, 1),
+    energyUnservedEnergyKwh: round(energyUnservedKwh, 1),
+    energyServiceRate: round(toFiniteNumber(summary.serviceRate, 1), 5),
+    endToEndUnservedKwh: round(endToEndUnservedKwh, 1),
+    endToEndUnservedRate: round(safeRatio(endToEndUnservedKwh, rawDemandKwh), 5),
+    endToEndServiceRate: round(endToEndServiceRate, 5),
+    unservedEnergyKwh: round(endToEndUnservedKwh, 1),
+    serviceRate: round(endToEndServiceRate, 5)
+  };
+}
+
 function clampLocal(value, min, max) {
   return Math.max(min, Math.min(max, value));
 }
@@ -1023,6 +1055,11 @@ function pickScenarioSummary(scenarioResult) {
 
     internalDeficitKwh: summary.internalDeficitKwh || 0,
     unservedEnergyKwh: summary.unservedEnergyKwh || 0,
+    endToEndUnservedKwh: summary.endToEndUnservedKwh || summary.unservedEnergyKwh || 0,
+    energyUnservedEnergyKwh: summary.energyUnservedEnergyKwh || 0,
+    pileUnservedKwh: summary.pileUnservedKwh || 0,
+    endToEndServiceRate: summary.endToEndServiceRate || summary.serviceRate || 0,
+    energyServiceRate: summary.energyServiceRate ?? null,
     deficitHours: summary.deficitHours || 0,
 
     gridImportKwh: summary.gridImportKwh || 0,
@@ -1265,6 +1302,7 @@ function runScenarioSetByDemandProfiles({
         params,
         scenarioKey
       });
+      const finalSummary = withEndToEndSummary(result.summary, profile);
 
       return [
         scenarioKey,
@@ -1278,7 +1316,7 @@ function runScenarioSetByDemandProfiles({
           },
 
           summary: {
-            ...result.summary,
+            ...finalSummary,
             demandProfileKey: profile.key,
             demandProfileLabel: profile.label,
             scenarioLogicLabel: binding.scenarioLogicLabel,

@@ -410,15 +410,15 @@ function renderM1(state) {
 
   if (el.checkKpis) {
     el.checkKpis.innerHTML = [
-      metricCardHtml("全年未满足电量", `${n(check.annualEquivalentUnservedKwh ?? check.unservedKwh, 1)} kWh`, `缺口率 ${pct(check.unservedRate || 0, 2)}`, (check.unservedRate || 0) <= 0.005 ? "通过" : "关注"),
-      metricCardHtml("供能满足率", pct(check.serviceRate, 2), "全年 D0 × TMY", check.serviceRate >= 0.99 ? "通过" : "关注"),
+      metricCardHtml("端到端未满足电量", `${n(check.annualEquivalentUnservedKwh ?? check.unservedKwh, 1)} kWh`, `含桩侧 ${n(check.pileUnservedKwh, 1)} kWh`, (check.unservedRate || 0) <= 0.005 ? "通过" : "关注"),
+      metricCardHtml("端到端满足率", pct(check.serviceRate, 2), "原始需求 → 桩 → 能源系统", check.serviceRate >= 0.99 ? "通过" : "关注"),
       metricCardHtml("最低 SOC", `${n(check.socMinPct, 1)}%`, "离网运行储能安全边界", check.socMinPct >= 5 ? "通过" : "关注"),
       metricCardHtml("LCOE", `${n(lcoe, 3)} 元/kWh`, "年化投资 + 运维 / 全年需求电量", "经济性"),
       metricCardHtml("可再生供能占比", pct(check.renewableSupplyRate ?? check.renewableShare, 1), "PV 直接供能 + 储能供能 / 负荷", "参考"),
       metricCardHtml("PV 自用率", pct(check.pvSelfUseRate, 1), "已利用 PV / PV 总发电", "参考"),
       metricCardHtml("弃光率", `${n(check.curtailmentRatePct, 1)}%`, `弃光 ${n(check.curtailmentKwh, 1)} kWh`, "参考"),
       metricCardHtml("全年 PV 发电", `${n(check.pvGenerationAnnualKwh, 1)} kWh`, "全年 TMY 气象模拟", "参考"),
-      metricCardHtml("月度表现提示", monthlyCheck.worstMonthName || "--", `未满足电量最高月 ${n(monthlyCheck.worstMonthUnservedKwh, 1)} kWh`, "提示")
+      metricCardHtml("月度表现提示", monthlyCheck.worstMonthName || "--", `端到端未满足最高月 ${n(monthlyCheck.worstMonthUnservedKwh, 1)} kWh`, "提示")
     ].join("");
   }
 
@@ -467,9 +467,12 @@ function renderM1(state) {
         ["基准需求口径", check.baselineDemandType || result.demandProfile?.sourceProfile || "annual_d0", "M1 使用全年 D0 初始需求进行 S0 初始定容"],
         ["气象口径", result.summary?.weatherModeLabel || check.baselineWeatherType || "--", "优先使用 8760 小时 TMY 原生全年气象"],
         ["全年需求电量", `${n(check.baselineDemandKwh || check.totalLoadEnergyAnnualKwh, 1)} kWh`, "全年 D0 负荷积分"],
-        ["全年未满足电量", `${n(check.annualEquivalentUnservedKwh ?? check.unservedKwh, 1)} kWh`, "全年离网仿真中未被 PV / 储能满足的电量"],
-        ["缺口率", pct(check.unservedRate || 0, 2), "未满足电量 / 全年需求电量"],
-        ["供能满足率", pct(check.serviceRate, 2), check.serviceRate >= 0.99 ? "满足 S0 初始定容要求" : "需要在 M3 中补强或优化"],
+        ["端到端未满足电量", `${n(check.annualEquivalentUnservedKwh ?? check.unservedKwh, 1)} kWh`, "桩侧未交付 + 能源侧未满足"],
+        ["其中能源侧未满足", `${n(check.energyUnservedKwh, 1)} kWh`, "桩服务后 D0 进入 PV / 储能后仍未满足的电量"],
+        ["其中桩侧未交付", `${n(check.pileUnservedKwh, 1)} kWh`, "原始车辆需求中未被 M1 SLA 桩服务完成的电量"],
+        ["端到端缺口率", pct(check.unservedRate || 0, 2), "端到端未满足电量 / 原始全年充电需求"],
+        ["端到端满足率", pct(check.serviceRate, 2), check.serviceRate >= 0.99 ? "满足端到端服务要求" : "需要关注桩侧或能源侧缺口"],
+        ["能源侧供能满足率", pct(check.energyServiceRate, 2), "能源系统实际供给 / 桩服务后 D0 负荷"],
         ["最低 SOC", `${n(check.socMinPct, 1)}%`, check.socMinPct >= 5 ? "满足储能安全边界" : "储能存在触底风险"],
         ["LCOE", `${n(lcoe, 3)} 元/kWh`, "年化投资 + 运维 / 全年需求电量"],
         ["可再生供能占比", pct(check.renewableSupplyRate ?? check.renewableShare, 1), "PV 直接供能 + 储能供能 / 全年负荷"],
@@ -484,14 +487,18 @@ function renderM1(state) {
     el.demandTable.innerHTML = tableHtml(
       ["项目", "结果", "说明"],
       [
-        ["全年 D0 总需求", `${n(demand.annualDemandKwh || demand.totalEnergyKwh, 1)} kWh`, "M1 使用的全年初始充电需求画像"],
-        ["日均需求", `${n(demand.totalDailyKwh, 1)} kWh/day`, "全年总需求 / 365"],
-        ["峰值负荷", `${n(demand.peakLoadKw, 1)} kW`, "桩服务后全年峰值负荷"],
-        ["原始峰值负荷", `${n(demand.rawPeakLoadKw, 1)} kW`, "未经过桩服务约束前的需求峰值"],
+        ["原始全年充电需求", `${n(demand.rawEnergyKwh, 1)} kWh`, "车辆事件生成的全年自然充电需求，尚未经过桩服务约束"],
+        ["桩服务后 D0 负荷", `${n(demand.annualDemandKwh || demand.totalEnergyKwh, 1)} kWh`, "M1 真正传入 S0 光储定容的全年 EV 负荷曲线积分"],
+        ["原始日均需求", `${n(demand.rawDailyKwh, 1)} kWh/day`, "原始全年充电需求 / 365"],
+        ["D0 日均负荷", `${n(demand.totalDailyKwh, 1)} kWh/day`, "桩服务后 D0 负荷 / 365"],
+        ["桩服务满足率", pct(demand.pileServiceRate, 2), "桩服务后 D0 负荷 / 原始全年充电需求"],
+        ["D0 峰值负荷", `${n(demand.peakLoadKw, 1)} kW`, "桩服务后全年峰值负荷"],
+        ["原始峰值需求", `${n(demand.rawPeakLoadKw, 1)} kW`, "未经过桩服务约束前的需求峰值"],
         ["平均单次需求", `${n(demand.averageSessionNeedKwh, 1)} kWh`, "车辆充电事件平均能量需求"],
-        ["桩侧未满足电量", `${n(demand.unmetByPileKwh, 1)} kWh`, "由桩服务能力不足导致"],
-        ["排队未满足电量", `${n(demand.queueUnmetKwh, 1)} kWh`, "排队或等待导致"],
+        ["桩侧未交付总电量", `${n(demand.unmetByPileKwh, 1)} kWh`, "原始需求中未被桩服务完成的电量"],
+        ["其中排队到离场", `${n(demand.queueUnmetKwh, 1)} kWh`, "桩侧未交付总电量中的排队等待部分，不应与上一行相加"],
         ["放弃车辆数", `${demand.abandonedCount || 0}`, "未能完成服务的车辆事件数"],
+        ["充电事件总数", `${demand.eventCount || demand.events?.length || 0}`, "全年车辆充电事件数"],
         ["快充事件数", `${demand.fastCount || 0}`, "FAST 事件"],
         ["慢充事件数", `${demand.slowCount || 0}`, "SLOW 事件"],
         ["仿真步数", `${demand.annualTicks || demand.loadCurve?.length || "--"}`, "15 分钟时间步"]
@@ -503,7 +510,7 @@ function renderM1(state) {
     monthly.map((m) => m.monthName),
     [
       {
-        name: "月未满足",
+        name: "月端到端未满足",
         data: monthly.map((m) => m.unservedKwhMonth ?? m.unservedKwhWeek ?? 0)
       },
       {
@@ -523,7 +530,7 @@ function renderM1(state) {
   if (el.monthTable) {
     el.monthTable.innerHTML = monthly.length
       ? tableHtml(
-          ["月份", "天数权重", "月需求", "月未满足", "缺口率", "服务率", "最低 SOC", "弃光率"],
+          ["月份", "天数权重", "月D0负荷", "月端到端未满足", "缺口率", "端到端服务率", "最低 SOC", "弃光率"],
           monthly.map((m) => [
             m.monthName, n(m.weight, 3), `${n(m.demandKwhMonth ?? m.demandKwhWeek, 1)} kWh`, `${n(m.unservedKwhMonth ?? m.unservedKwhWeek, 1)} kWh`,
             pct(m.unservedRate || 0, 2), pct(m.serviceRate, 2), `${n(m.socMinPct, 1)}%`, `${n(m.curtailmentRatePct, 1)}%`
@@ -544,8 +551,8 @@ function scenarioCard(result, scenario) {
       ["电网依赖", pct(summary.gridDependencyRate, 1)]
     ]
     : [
-      ["未满足电量", `${n(summary.unservedEnergyKwh, 1)} kWh`],
-      ["服务满足率", pct(summary.serviceRate, 1)],
+      ["端到端未满足", `${n(summary.unservedEnergyKwh, 1)} kWh`],
+      ["端到端服务率", pct(summary.serviceRate, 1)],
       ["最低 SOC", `${n(summary.socMinPct, 1)}%`],
       ["缺口时长", `${n(summary.deficitHours || summary.blackoutHours || 0, 1)} h`]
     ];
@@ -577,11 +584,11 @@ function renderM2AnnualScenarioChart(result, scenarioKey, container) {
   const pvName = usesNativeGtilt ? "PV 出力（8760 G_tilt）" : "PV 出力";
   renderChart(container, lineOption([
     { name: "EV 负荷", data: chart.ev || [], step: "end" },
-    ...(showOriginalDemand ? [{ name: "原始需求", data: originalDemand, step: "end", lineStyle: { type: "dashed" } }] : []),
+    ...(showOriginalDemand ? [{ name: "D0 调度前负荷", data: originalDemand, step: "end", lineStyle: { type: "dashed" } }] : []),
     { name: pvName, data: chart.pv || [] },
     { name: "SOC", data: chart.soc || [], yAxisIndex: 1 },
     { name: "内部缺口", data: chart.internalDeficit || [], step: "end" },
-    { name: isGrid ? "购电功率" : "最终未满足", data: isGrid ? (chart.grid || []) : (chart.unserved || []), step: "end" },
+    { name: isGrid ? "购电功率" : "能源侧未满足", data: isGrid ? (chart.grid || []) : (chart.unserved || []), step: "end" },
     { name: "弃光", data: chart.curtailed || [], step: "end" }
   ], "kW", {
     annualTimeAxis: true,
@@ -628,9 +635,12 @@ function renderM2(state) {
   setText(el.meta, `${horizon.days || summary.annualDays || 365} 天 / ${horizon.ticks || summary.ticks || 35040} 步 / 固定 S0 硬件`);
   el.scenarioMatrix.innerHTML = SCENARIOS.map((scenario) => scenarioCard(result, scenario)).join("");
   const rows = [
-    ["服务满足率", ...SCENARIOS.map((s) => pct(getScenarioSummary(result, s.key).serviceRate, 1))],
+    ["端到端服务率", ...SCENARIOS.map((s) => pct(getScenarioSummary(result, s.key).serviceRate, 1))],
+    ["能源侧供能满足率", ...SCENARIOS.map((s) => pct(getScenarioSummary(result, s.key).energyServiceRate, 1))],
     ["内部缺口", ...SCENARIOS.map((s) => `${n(getScenarioSummary(result, s.key).internalDeficitKwh, 1)} kWh`)],
-    ["最终未满足", ...SCENARIOS.map((s) => `${n(getScenarioSummary(result, s.key).unservedEnergyKwh, 1)} kWh`)],
+    ["端到端未满足", ...SCENARIOS.map((s) => `${n(getScenarioSummary(result, s.key).unservedEnergyKwh, 1)} kWh`)],
+    ["其中能源侧未满足", ...SCENARIOS.map((s) => `${n(getScenarioSummary(result, s.key).energyUnservedEnergyKwh, 1)} kWh`)],
+    ["其中桩侧未交付", ...SCENARIOS.map((s) => `${n(getScenarioSummary(result, s.key).pileUnservedKwh, 1)} kWh`)],
     ["购电量", ...SCENARIOS.map((s) => `${n(getScenarioSummary(result, s.key).gridImportKwh, 1)} kWh`)],
     ["购电成本", ...SCENARIOS.map((s) => `${n(getScenarioSummary(result, s.key).gridCostYuan, 1)} 元`)],
     ["最低 SOC", ...SCENARIOS.map((s) => `${n(getScenarioSummary(result, s.key).socMinPct, 1)}%`)]
@@ -639,9 +649,9 @@ function renderM2(state) {
   renderM2AnnualCharts(result, el);
   const comparison = result.comparison || {};
   el.valueCards.innerHTML = `
-    <div class="value-card"><span>离网调度价值</span><strong>${n(comparison.dispatchGainOffgrid?.unservedReductionKwh, 1)} kWh</strong><small>未满足电量降低</small></div>
+    <div class="value-card"><span>离网调度价值</span><strong>${n(comparison.dispatchGainOffgrid?.unservedReductionKwh, 1)} kWh</strong><small>端到端未满足降低</small></div>
     <div class="value-card"><span>入网调度价值</span><strong>${n(comparison.dispatchGainGrid?.gridImportReductionKwh, 1)} kWh</strong><small>购电量降低</small></div>
-    <div class="value-card"><span>电网接入价值</span><strong>${n(comparison.gridAccessGain?.unservedReductionKwh, 1)} kWh</strong><small>未满足电量降低</small></div>
+    <div class="value-card"><span>电网接入价值</span><strong>${n(comparison.gridAccessGain?.unservedReductionKwh, 1)} kWh</strong><small>端到端未满足降低</small></div>
   `;
 }
 
@@ -678,7 +688,10 @@ function getM3ScenarioCards(result) {
         extraCapexWan: cost.extraCapexWan,
         gridCostWan: cost.gridCostWan,
         serviceRate: validation.serviceRate,
+        energyServiceRate: validation.energyServiceRate,
         unservedEnergyKwh: validation.unservedEnergyKwh,
+        energyUnservedEnergyKwh: validation.energyUnservedEnergyKwh,
+        pileUnservedKwh: validation.pileUnservedKwh,
         deficitHours: validation.deficitHours,
         socMinPct: validation.socMinPct,
         gridImportKwh: grid.gridImportKwh,
@@ -725,7 +738,10 @@ function getM3ComparisonRows(result) {
       n7Reduction: saving.n7Reduction,
       n30Reduction: saving.n30Reduction,
       serviceRate: metrics.serviceRate,
+      energyServiceRate: metrics.energyServiceRate,
       unservedEnergyKwh: metrics.unservedEnergyKwh,
+      energyUnservedEnergyKwh: metrics.energyUnservedEnergyKwh,
+      pileUnservedKwh: metrics.pileUnservedKwh,
       socMinPct: metrics.socMinPct,
       gridImportKwh: metrics.gridImportKwh,
       gridCostYuan: metrics.gridCostYuan,
@@ -774,10 +790,10 @@ function optimumCard(result, scenario) {
         <div><span>PV</span><strong>${n(plan.pvKw, 1)} kW</strong></div>
         <div><span>储能</span><strong>${n(plan.storageKwh, 1)} kWh</strong></div>
         <div><span>PCS</span><strong>${n(plan.pcsKw, 1)} kW</strong></div>
-        <div><span>慢 / 快充</span><strong>${plan.n7kw ?? "--"} / ${plan.n30kw ?? "--"}</strong></div>
+        <div><span>慢 / 快充</span><strong>${plan.n7kw ?? "--"} / ${plan.n30kw ?? "--"}</strong><small>M1 SLA 固定</small></div>
         <div><span>年综合成本</span><strong>${n(metrics.annualTotalCostWan, 1)} 万元</strong></div>
         <div><span>相对 S0 节省</span><strong>${n(saving.capexSavingWan, 1)} 万元</strong></div>
-        <div><span>服务满足率</span><strong>${pct(metrics.serviceRate, 1)}</strong></div>
+        <div><span>端到端服务率</span><strong>${pct(metrics.serviceRate, 1)}</strong></div>
         <div><span>最低 SOC</span><strong>${n(metrics.socMinPct, 1)}%</strong></div>
       </div>
       <p class="scenario-note">${card?.note || ""}</p>
@@ -793,8 +809,8 @@ function renderM3(state) {
     el.riskSummary.innerHTML = SCENARIOS.map((scenario) => {
       const summary = getScenarioSummary(m2, scenario.key);
       const main = scenario.key.startsWith("grid_")
-        ? `服务率 ${pct(summary.serviceRate, 1)}，购电 ${n(summary.gridImportKwh, 1)} kWh，成本 ${n(summary.gridCostYuan, 1)} 元`
-        : `服务率 ${pct(summary.serviceRate, 1)}，未满足 ${n(summary.unservedEnergyKwh, 1)} kWh，最低 SOC ${n(summary.socMinPct, 1)}%`;
+        ? `端到端服务率 ${pct(summary.serviceRate, 1)}，购电 ${n(summary.gridImportKwh, 1)} kWh，成本 ${n(summary.gridCostYuan, 1)} 元`
+        : `端到端服务率 ${pct(summary.serviceRate, 1)}，端到端未满足 ${n(summary.unservedEnergyKwh, 1)} kWh，最低 SOC ${n(summary.socMinPct, 1)}%`;
       return `<div><span>${scenario.label}</span><strong>${main}</strong></div>`;
     }).join("");
   } else {
@@ -803,9 +819,9 @@ function renderM3(state) {
 
   if (!result) {
     setText(el.title, "等待 M3 运行");
-    setText(el.meta, "完成后输出 C1-C4 四套最小可行配置、相对 S0 削减量与按工程条件推荐。");
+    setText(el.meta, "完成后输出 C1-C4 四套最小可行光储 PCS 配置、相对 S0 调整量与按工程条件推荐；充电桩固定沿用 M1 SLA 结果。");
     el.optimumCards.innerHTML = SCENARIOS.map((scenario) => optimumCard(null, scenario)).join("");
-    el.comparisonTable.innerHTML = `<div class="empty-note">运行 M3 后展示 C1-C4 配置、成本、削减量与可行性横向比较。</div>`;
+    el.comparisonTable.innerHTML = `<div class="empty-note">运行 M3 后展示 C1-C4 光储 PCS 配置、成本、调整量与可行性横向比较；桩数保持 M1 SLA 定容结果。</div>`;
     el.recommendation.innerHTML = `<div class="empty-note">运行 M3 后按"是否接电网 / 是否接受调度 / 最低年综合成本"生成推荐。</div>`;
     resetChart(el.capexChart, "运行 M3 后展示投资成本对比。");
     resetChart(el.capacityChart, "运行 M3 后展示设备容量对比。");
@@ -816,7 +832,7 @@ function renderM3(state) {
   setText(el.title, "C1-C4 四情景配置优化已完成");
   setText(
     el.meta,
-    `候选配置 ${result.candidateCount || result.summary?.candidateCount || 0} 组 · 先满足全年约束，再按年综合成本筛选 C1-C4`
+    `候选配置 ${result.candidateCount || result.summary?.candidateCount || 0} 组 · 固定 M1 SLA 桩数 · 仅优化 PV / 储能 / PCS · 先满足全年约束再筛选 C1-C4`
   );
   el.optimumCards.innerHTML = SCENARIOS.map((scenario) => optimumCard(result, scenario)).join("");
 
@@ -828,15 +844,17 @@ function renderM3(state) {
     ["PV 容量", ...SCENARIOS.map((s) => `${n(rowByKey[s.key]?.pvKw, 1)} kW`)],
     ["储能容量", ...SCENARIOS.map((s) => `${n(rowByKey[s.key]?.storageKwh, 1)} kWh`)],
     ["PCS 功率", ...SCENARIOS.map((s) => `${n(rowByKey[s.key]?.pcsKw, 1)} kW`)],
-    ["慢 / 快充", ...SCENARIOS.map((s) => `${rowByKey[s.key]?.n7kw ?? "--"} / ${rowByKey[s.key]?.n30kw ?? "--"}`)],
+    ["慢 / 快充（M1 SLA固定）", ...SCENARIOS.map((s) => `${rowByKey[s.key]?.n7kw ?? "--"} / ${rowByKey[s.key]?.n30kw ?? "--"}`)],
     ["相对 S0 投资节省", ...SCENARIOS.map((s) => `${n(rowByKey[s.key]?.capexSavingWan, 1)} 万元`)],
     ["年综合成本", ...SCENARIOS.map((s) => `${n(rowByKey[s.key]?.annualTotalCostWan, 1)} 万元`)],
-    ["削减 PV", ...SCENARIOS.map((s) => `${n(rowByKey[s.key]?.pvReductionKw, 1)} kW`)],
-    ["削减储能", ...SCENARIOS.map((s) => `${n(rowByKey[s.key]?.storageReductionKwh, 1)} kWh`)],
-    ["削减 PCS", ...SCENARIOS.map((s) => `${n(rowByKey[s.key]?.pcsReductionKw, 1)} kW`)],
-    ["削减慢 / 快充", ...SCENARIOS.map((s) => `${n(rowByKey[s.key]?.n7Reduction, 0)} / ${n(rowByKey[s.key]?.n30Reduction, 0)}`)],
-    ["服务满足率", ...SCENARIOS.map((s) => pct(rowByKey[s.key]?.serviceRate, 1))],
-    ["未满足电量", ...SCENARIOS.map((s) => `${n(rowByKey[s.key]?.unservedEnergyKwh, 1)} kWh`)],
+    ["相对 S0 PV 变化", ...SCENARIOS.map((s) => `${n(rowByKey[s.key]?.pvReductionKw, 1)} kW`)],
+    ["相对 S0 储能变化", ...SCENARIOS.map((s) => `${n(rowByKey[s.key]?.storageReductionKwh, 1)} kWh`)],
+    ["相对 S0 PCS 变化", ...SCENARIOS.map((s) => `${n(rowByKey[s.key]?.pcsReductionKw, 1)} kW`)],
+    ["端到端服务率", ...SCENARIOS.map((s) => pct(rowByKey[s.key]?.serviceRate, 1))],
+    ["能源侧供能满足率", ...SCENARIOS.map((s) => pct(rowByKey[s.key]?.energyServiceRate, 1))],
+    ["端到端未满足", ...SCENARIOS.map((s) => `${n(rowByKey[s.key]?.unservedEnergyKwh, 1)} kWh`)],
+    ["其中能源侧未满足", ...SCENARIOS.map((s) => `${n(rowByKey[s.key]?.energyUnservedEnergyKwh, 1)} kWh`)],
+    ["其中桩侧未交付", ...SCENARIOS.map((s) => `${n(rowByKey[s.key]?.pileUnservedKwh, 1)} kWh`)],
     ["最低 SOC", ...SCENARIOS.map((s) => `${n(rowByKey[s.key]?.socMinPct, 1)}%`)],
     ["购电量", ...SCENARIOS.map((s) => `${n(rowByKey[s.key]?.gridImportKwh, 1)} kWh`)],
     ["购电成本", ...SCENARIOS.map((s) => `${n(rowByKey[s.key]?.gridCostYuan, 1)} 元`)],
@@ -891,7 +909,7 @@ function renderM3(state) {
           <small>
             ${item.feasible ? "可行" : "兜底"} ·
             年综合成本 ${n(item.annualTotalCostWan, 1)} 万元 ·
-            服务率 ${pct(item.serviceRate, 1)} ·
+            端到端服务率 ${pct(item.serviceRate, 1)} ·
             最低 SOC ${n(item.socMinPct, 1)}%
           </small>
         </div>

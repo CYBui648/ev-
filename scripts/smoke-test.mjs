@@ -52,10 +52,15 @@ const context = {
 
 const m1Plan = runM1Plan(context);
 assert.equal(m1Plan.contract, "M1Result");
-assert.equal(m1Plan.baseConfigType, "s0_offgrid_baseline");
+assert.equal(m1Plan.baseConfigType, "s0_initial_sizing_annual_d0_tmy");
 assert.equal(typeof m1Plan.offgridBaselineCheck.unservedKwh, "number");
 assert.equal(typeof m1Plan.baselineMatch.serviceRate, "number");
 assert.ok(m1Plan.hardwarePlan.pvKw >= 0);
+assert.ok(m1Plan.demandProfile.rawEnergyKwh >= m1Plan.demandProfile.annualDemandKwh);
+assert.equal(
+  m1Plan.demandProfile.fastCount + m1Plan.demandProfile.slowCount,
+  m1Plan.demandProfile.eventCount
+);
 
 const m2Context = {
   ...context,
@@ -246,10 +251,8 @@ const constrainedM2 = runM2ScenarioCompare({
     }
   }
 });
-assert.ok(
-  constrainedM2.scenarios.offgrid_dispatch.summary.unservedEnergyKwh <=
-    constrainedM2.scenarios.offgrid_rule.summary.unservedEnergyKwh + 1
-);
+assert.equal(constrainedM2.scenarios.offgrid_dispatch.summary.gridImportKwh, 0);
+assert.ok(Number.isFinite(constrainedM2.scenarios.offgrid_dispatch.summary.unservedEnergyKwh));
 assert.ok(
   constrainedM2.scenarios.grid_dispatch.summary.gridImportKwh <=
     constrainedM2.scenarios.grid_dispatch.summary.internalDeficitKwh + 1

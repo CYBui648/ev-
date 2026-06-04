@@ -408,25 +408,30 @@ function maxSeriesValue(series, fallback = 0) {
   }, 0);
 }
 
-function summarizeMonthlyFromAnnualSimulation(simulation) {
+function summarizeMonthlyFromAnnualSimulation(simulation, demandProfile = null) {
   const chartData = simulation.chartData || {};
+  const rawDemandCurve = demandProfile?.rawLoadCurve || [];
   const monthlyChecks = [];
 
   for (let monthIndex = 0; monthIndex < 12; monthIndex++) {
     const days = MONTH_DAYS[monthIndex] || 30;
 
     const ev = sliceByMonth(chartData.ev || [], monthIndex);
+    const rawDemand = sliceByMonth(rawDemandCurve, monthIndex);
     const pv = sliceByMonth(chartData.pv || [], monthIndex);
     const soc = sliceByMonth(chartData.soc || [], monthIndex);
     const unserved = sliceByMonth(chartData.unserved || [], monthIndex);
     const curtailed = sliceByMonth(chartData.curtailed || [], monthIndex);
 
     const demandKwh = sumPowerSeriesKwh(ev);
+    const rawDemandKwh = sumPowerSeriesKwh(rawDemand);
+    const pileUnservedKwh = Math.max(0, rawDemandKwh - demandKwh);
     const pvGenerationKwh = sumPowerSeriesKwh(pv);
-    const unservedKwh = sumPowerSeriesKwh(unserved);
+    const energyUnservedKwh = sumPowerSeriesKwh(unserved);
+    const unservedKwh = pileUnservedKwh + energyUnservedKwh;
     const curtailmentKwh = sumPowerSeriesKwh(curtailed);
-    const deliveredKwh = Math.max(0, demandKwh - unservedKwh);
-    const serviceRate = demandKwh > 0 ? deliveredKwh / demandKwh : 1;
+    const deliveredKwh = Math.max(0, rawDemandKwh - unservedKwh);
+    const serviceRate = rawDemandKwh > 0 ? deliveredKwh / rawDemandKwh : 1;
     const socMinPct = minSeriesValue(soc, 100);
 
     monthlyChecks.push({
@@ -437,12 +442,15 @@ function summarizeMonthlyFromAnnualSimulation(simulation) {
 
       demandKwhMonth: round(demandKwh, 1),
       unservedKwhMonth: round(unservedKwh, 1),
+      rawDemandKwhMonth: round(rawDemandKwh, 1),
+      pileUnservedKwhMonth: round(pileUnservedKwh, 1),
+      energyUnservedKwhMonth: round(energyUnservedKwh, 1),
 
       // 兼容旧 UI 字段名，下一轮前端再改名
       demandKwhWeek: round(demandKwh, 1),
       unservedKwhWeek: round(unservedKwh, 1),
 
-      unservedRate: round(ratio(unservedKwh, demandKwh), 5),
+      unservedRate: round(ratio(unservedKwh, rawDemandKwh), 5),
       serviceRate: round(serviceRate, 5),
       socMinPct: round(Number.isFinite(socMinPct) ? socMinPct : 0, 1),
 
@@ -533,6 +541,27 @@ function buildDemandProfileSummary(demand) {
   };
 }
 
+function buildEndToEndMetrics(demand, summary) {
+  const rawDemandKwh = toFiniteNumber(demand.rawEnergyKwh, 0);
+  const d0DemandKwh = toFiniteNumber(summary.demandKwh, 0);
+  const pileUnservedKwh = Math.max(0, rawDemandKwh - d0DemandKwh);
+  const energyUnservedKwh = toFiniteNumber(summary.unservedEnergyKwh, 0);
+  const endToEndUnservedKwh = pileUnservedKwh + energyUnservedKwh;
+  const endToEndDeliveredKwh = Math.max(0, rawDemandKwh - endToEndUnservedKwh);
+
+  return {
+    rawDemandKwh: round(rawDemandKwh, 1),
+    d0DemandKwh: round(d0DemandKwh, 1),
+    pileUnservedKwh: round(pileUnservedKwh, 1),
+    energyUnservedKwh: round(energyUnservedKwh, 1),
+    endToEndUnservedKwh: round(endToEndUnservedKwh, 1),
+    endToEndUnservedRate: round(ratio(endToEndUnservedKwh, rawDemandKwh), 5),
+    endToEndServiceRate: rawDemandKwh > 0
+      ? round(endToEndDeliveredKwh / rawDemandKwh, 5)
+      : 1
+  };
+}
+
 export function runM1Plan(context) {
   const params = normalizeProjectInput(context);
 
@@ -549,7 +578,8 @@ export function runM1Plan(context) {
 
   const capex = calcCapexWan(hardware, params);
   const lcoe = score.lcoeYuanPerKwh;
-  const monthlyValidation = summarizeMonthlyFromAnnualSimulation(simulation);
+  const monthlyValidation = summarizeMonthlyFromAnnualSimulation(simulation, demand);
+  const endToEnd = buildEndToEndMetrics(demand, summary);
 
   const baselineWeatherType = params.gTiltData?.length >= 8760
     ? "annual_native_tmy"
@@ -601,14 +631,18 @@ export function runM1Plan(context) {
       baselineDemandType: "annual_d0",
 
       baselineDemandKwh: round(summary.demandKwh, 1),
-      baselineUnservedKwh: round(summary.unservedEnergyKwh, 1),
-      baselineUnservedRate: round(ratio(summary.unservedEnergyKwh || 0, summary.demandKwh || 0), 5),
+      baselineUnservedKwh: endToEnd.endToEndUnservedKwh,
+      baselineUnservedRate: endToEnd.endToEndUnservedRate,
+      energyUnservedKwh: endToEnd.energyUnservedKwh,
+      pileUnservedKwh: endToEnd.pileUnservedKwh,
 
       annualDemandKwh: round(summary.demandKwh, 1),
-      annualEquivalentUnservedKwh: round(summary.unservedEnergyKwh, 1),
-      annualUnservedRate: round(ratio(summary.unservedEnergyKwh || 0, summary.demandKwh || 0), 5),
+      rawDemandKwh: endToEnd.rawDemandKwh,
+      annualEquivalentUnservedKwh: endToEnd.endToEndUnservedKwh,
+      annualUnservedRate: endToEnd.endToEndUnservedRate,
 
-      serviceRate: round(summary.serviceRate, 5),
+      serviceRate: endToEnd.endToEndServiceRate,
+      energyServiceRate: round(summary.serviceRate, 5),
       deficitHours: round(summary.deficitHours, 1),
       socMinPct: round(summary.socMinPct, 1),
 
@@ -629,12 +663,16 @@ export function runM1Plan(context) {
       checkType: "annual_d0_tmy_offgrid_initial_sizing",
       baselineWeatherType,
 
-      annualEquivalentUnservedKwh: round(summary.unservedEnergyKwh, 1),
-      unservedKwh: round(summary.unservedEnergyKwh, 1),
-      unservedRate: round(ratio(summary.unservedEnergyKwh || 0, summary.demandKwh || 0), 5),
+      annualEquivalentUnservedKwh: endToEnd.endToEndUnservedKwh,
+      unservedKwh: endToEnd.endToEndUnservedKwh,
+      unservedRate: endToEnd.endToEndUnservedRate,
+      energyUnservedKwh: endToEnd.energyUnservedKwh,
+      pileUnservedKwh: endToEnd.pileUnservedKwh,
+      rawDemandKwh: endToEnd.rawDemandKwh,
 
       deficitHours: round(summary.deficitHours, 1),
-      serviceRate: round(summary.serviceRate, 5),
+      serviceRate: endToEnd.endToEndServiceRate,
+      energyServiceRate: round(summary.serviceRate, 5),
       socMinPct: round(summary.socMinPct, 1),
 
       pvGenerationAnnualKwh: round(summary.pvGenerationKwh, 1),

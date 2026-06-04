@@ -10,6 +10,7 @@ import { SCENARIO_DEFINITIONS, SCENARIO_KEYS } from "./scenario-definitions.js";
 const TICKS_PER_DAY = 96;
 const TICK_HOURS = 0.25;
 const DIRECT_EFFICIENCY = 0.92;
+const DEFAULT_SOC_RESERVE_PCT = 0.05;
 const DEFAULT_TOU = { valley: 0.30, flat: 0.70, peak: 1.10 };
 const DEFAULT_HOURLY_PV = [
   0, 0, 0, 0, 0, 0, 0.05, 0.2, 0.5, 0.8, 1.0, 0.95,
@@ -117,6 +118,7 @@ export function normalizeProjectInput(context = {}) {
     cost30kw: safeNumber(m1.cost30kw, 2.5),
     ems: safeNumber(m1.ems, 10),
     transformerLimitKw: safeNumber(m2.transformerLimitKw, 500),
+    socReservePct: clamp(safeNumber(m3.socReservePct ?? m1.socReservePct, DEFAULT_SOC_RESERVE_PCT), 0, 0.5),
     monthMode: m2.monthMode || "auto",
     monthIndex: clamp(Math.trunc(safeNumber(m2.monthIndex, 0)), 0, 11),
     gTiltData,
@@ -356,6 +358,9 @@ export function buildDemandProfile(params, { days = 7, seed = 20260512, pilePlan
   const service = simulatePileService(events, totalTicks, estimatedPilePlan);
   const rawLoadCurve = rawDemandCurve(events, totalTicks);
   const rawWeekKwh = events.reduce((sum, event) => sum + event.energyNeed, 0);
+  const fastCount = events.filter((event) => event.tag === "FAST").length;
+  const slowCount = events.filter((event) => event.tag === "SLOW").length;
+  const deliveredEnergy = service.deliveredEnergy;
   return {
     horizonDays: days,
     events,
@@ -369,9 +374,14 @@ export function buildDemandProfile(params, { days = 7, seed = 20260512, pilePlan
     slowOccupancy: service.slowOccupancy,
     rawFastOccupancy: estimatedPilePlan.rawFastOcc || [],
     rawSlowOccupancy: estimatedPilePlan.rawSlowOcc || [],
-    totalEnergyKwh: service.deliveredEnergy,
-    totalDailyKwh: days > 0 ? service.deliveredEnergy / days : 0,
+    eventCount: events.length,
+    fastCount,
+    slowCount,
+    totalEnergyKwh: deliveredEnergy,
+    totalDailyKwh: days > 0 ? deliveredEnergy / days : 0,
     rawEnergyKwh: rawWeekKwh,
+    rawDailyKwh: days > 0 ? rawWeekKwh / days : 0,
+    pileServiceRate: rawWeekKwh > 0 ? deliveredEnergy / rawWeekKwh : 1,
     peakLoadKw: Math.max(0, ...service.loadCurve),
     rawPeakLoadKw: Math.max(0, ...rawLoadCurve),
     unmetByPileKwh: service.unmetByPile,
@@ -473,6 +483,7 @@ export function simulateEnergyScenario({ hardware, loadCurve, irradiance, params
   const scenario = SCENARIO_DEFINITIONS[scenarioKey] || SCENARIO_DEFINITIONS.offgrid_rule;
   const touPrice = params.climate?.gridTouPrice || DEFAULT_TOU;
   let soc = hardware.storageKwh * 0.35;
+  const socReserveKwh = hardware.storageKwh * clamp(safeNumber(params.socReservePct, DEFAULT_SOC_RESERVE_PCT), 0, 0.5);
   let pvToLoad = 0;
   let batteryToLoad = 0;
   let gridImport = 0;
@@ -528,7 +539,7 @@ export function simulateEnergyScenario({ hardware, loadCurve, irradiance, params
       availablePv -= charge;
     }
 
-    const canDischarge = Math.max(0, soc);
+    const canDischarge = Math.max(0, soc - socReserveKwh);
     const dischargeLimit = hardware.pcsKw * TICK_HOURS;
 
     if (remainingLoad > 0) {

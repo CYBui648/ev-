@@ -47,7 +47,7 @@
         <div class="kpi-bar-item"><span class="kpi-bar-label">Worker</span><strong id="kpi-worker">等待任务</strong></div>
         <div class="kpi-bar-item kpi-bar-metric"><span class="kpi-bar-label">S0 投资</span><strong id="kpi-capex">--</strong></div>
         <div class="kpi-bar-item kpi-bar-metric"><span class="kpi-bar-label">压力缺口</span><strong id="kpi-unmet">--</strong></div>
-        <div class="kpi-bar-item kpi-bar-metric"><span class="kpi-bar-label">服务率</span><strong id="kpi-service-rate">--</strong></div>
+        <div class="kpi-bar-item kpi-bar-metric"><span class="kpi-bar-label">端到端服务率</span><strong id="kpi-service-rate">--</strong></div>
       </header>
 
       <header class="topbar">
@@ -67,7 +67,7 @@
         <div class="report-kpis">
           <div class="report-kpi"><span>下一步</span><strong id="report-action">运行 M1</strong><small id="report-action-note">生成 S0</small></div>
           <div class="report-kpi"><span>S0 投资</span><strong id="report-capex">--</strong><small>万元</small></div>
-          <div class="report-kpi"><span>可靠性</span><strong id="report-service">--</strong><small>服务满足率</small></div>
+          <div class="report-kpi"><span>可靠性</span><strong id="report-service">--</strong><small>端到端满足率</small></div>
           <div class="report-kpi"><span>重点风险</span><strong id="report-risk-months">--</strong><small>情景短板</small></div>
         </div>
       </section>
@@ -77,7 +77,7 @@
           <div>
             <span class="eyebrow">Stage M1</span>
             <h3>M1 离网基准配置生成</h3>
-            <p>基于 8760 气象拟合情景与标准周 EV 设计需求，生成不依赖电网兜底的 S0 基础硬件配置，供 M2/M3 继续评价与优化。</p>
+            <p>基于全年 EV 初始需求 D0 与 8760 TMY / 城市合成气象，生成不依赖电网兜底的 S0 基础硬件配置，供 M2/M3 继续评价与优化。</p>
           </div>
           <button class="primary-btn" id="run-m1">运行 M1 生成 S0</button>
         </div>
@@ -118,7 +118,7 @@
 
             <article class="info-card input-card">
               <h4>8760 TMY 气象数据</h4>
-              <p>M1 会用 G_tilt 拟合月度典型气象与 96 点 PV 曲线，M2/M3 会继续复用同一份原生数据做压力月仿真。</p>
+              <p>M1/M2/M3 会优先复用 8760 小时 G_tilt 原生数据生成全年 15 分钟 PV 序列；未加载 CSV 时使用城市默认气象合成全年序列。</p>
               <div class="file-line">
                 <input type="file" id="m1-csv-file" accept=".csv,.txt" />
                 <span id="m1-csv-status">尚未加载 TMY CSV</span>
@@ -129,7 +129,7 @@
             <article class="info-card flow-card">
               <h4>M1 计算口径</h4>
               <div class="flow-steps">
-                <span>标准周 EV 需求</span><span>月度典型 PV</span><span>候选配置搜索</span><span>离网供能校验</span><span>成本排序</span><span>输出 S0</span>
+                <span>全年 D0 需求</span><span>全年 TMY / PV</span><span>候选配置搜索</span><span>离网供能校验</span><span>成本排序</span><span>输出 S0</span>
               </div>
             </article>
           </section>
@@ -154,13 +154,13 @@
                 <div class="section-head compact-head">
                   <div>
                     <h4>S0 生成口径</h4>
-                    <p>M1 使用标准周 EV 基准需求与 12 个月月度典型气象加权平均得到的基准气象，在离网边界下生成 S0 基础配置。12 个月逐月校验仅作为 S0 的月度适应性风险提示。</p>
+                    <p>M1 使用全年 EV 初始需求 D0 与全年 TMY / 城市合成气象，在离网边界下生成 S0 基础配置。12 个月统计由同一次全年仿真按月份切片得到，用于提示后续 M2/M3 关注的风险月份。</p>
                   </div>
                 </div>
                 <div class="logic-grid">
-                  <div class="logic-pill"><span>需求口径</span><strong>标准周 EV 基准需求</strong><small>由车辆画像、快慢充偏好、SOC 目标与桩服务模拟生成</small></div>
-                  <div class="logic-pill"><span>气象口径</span><strong>加权平均月度典型气象</strong><small>12 个月典型气象按月份天数加权，不是最差月</small></div>
-                  <div class="logic-pill"><span>运行边界</span><strong>离网运行</strong><small>PV + 储能不足时记为未满足电量，不允许电网兜底</small></div>
+                  <div class="logic-pill"><span>需求口径</span><strong>全年 D0 初始需求</strong><small>由车辆画像、快慢充偏好、SOC 目标与 M1 SLA 桩服务模拟生成</small></div>
+                  <div class="logic-pill"><span>气象口径</span><strong>全年 TMY / 城市合成气象</strong><small>优先使用 8760 小时 G_tilt 原生序列，缺省时使用城市参数生成全年 PV 序列</small></div>
+                  <div class="logic-pill"><span>运行边界</span><strong>离网运行</strong><small>最终未满足电量按桩侧未交付 + 能源侧未满足统计，不允许电网兜底</small></div>
                   <div class="logic-pill"><span>筛选顺序</span><strong>可靠性 → SOC → 可再生供能 → LCOE</strong><small>先保证能用，再比较经济性</small></div>
                 </div>
               </article>
@@ -169,15 +169,15 @@
                 <div class="section-head compact-head">
                   <div>
                     <h4>S0 离网基准核心指标</h4>
-                    <p>基于"标准周需求 × 加权平均基准气象"的主筛选结果，判断 S0 是否成立。</p>
+                    <p>基于“全年 D0 需求 × 全年 TMY / 合成气象”的主筛选结果，判断 S0 是否成立。</p>
                   </div>
                 </div>
                 <div class="metric-grid" id="m1-check-kpis"></div>
               </article>
 
               <article class="info-card insight-card">
-                <h4>基准气象下标准周运行曲线</h4>
-                <p class="chart-note" id="m1-chart-note">运行 M1 后展示基准加权气象下的标准周运行曲线。</p>
+                <h4>全年 D0 × TMY 运行曲线</h4>
+                <p class="chart-note" id="m1-chart-note">运行 M1 后展示全年 D0 需求与全年气象下的 S0 离网运行曲线。</p>
                 <div class="chart-box" id="m1-power-echart"></div>
               </article>
 
@@ -197,13 +197,13 @@
               </article>
 
               <article class="info-card insight-card wide-card">
-                <h4>标准周需求与桩服务结果</h4>
+                <h4>全年 D0 需求与桩服务结果</h4>
                 <div id="m1-demand-table" class="check-table"></div>
               </article>
 
               <article class="info-card insight-card">
                 <h4>S0 月度气象适应性校验</h4>
-                <p class="chart-note">S0 选定后，将同一配置放入 12 个月典型气象中复算，用于识别后续 M2/M3 需要关注的风险月份。</p>
+                <p class="chart-note">S0 选定后，将全年仿真结果按 12 个月切片统计，用于识别后续 M2/M3 需要关注的风险月份。</p>
                 <div class="chart-box" id="m1-month-echart"></div>
               </article>
 
@@ -242,7 +242,7 @@
             <article class="info-card">
               <h4>M2 与 M1 的区别</h4>
               <div class="compare-notes">
-                <div><strong>M1</strong><span>月度典型气象 + 标准周设计需求，用于生成 S0。</span></div>
+                <div><strong>M1</strong><span>全年 TMY / 合成气象 + 全年 D0 初始需求，用于生成 S0。</span></div>
                 <div><strong>M2</strong><span>全年原生气象 + 全年 EV 事件流，生成 D0/D1 需求画像，四情景全年评价。</span></div>
               </div>
             </article>
@@ -270,7 +270,7 @@
             <section class="insight-grid">
               <article class="info-card insight-card wide-card">
                 <h4>C1 离网 + D0 全年运行曲线</h4>
-                <p class="chart-note">EV 负荷、PV 出力、SOC、内部缺口、最终未满足与弃光。</p>
+                <p class="chart-note">EV 负荷、PV 出力、SOC、内部缺口、能源侧未满足与弃光。</p>
                 <div class="chart-box" id="m2-annual-chart-offgrid-rule"></div>
               </article>
 
@@ -310,7 +310,7 @@
           <div>
             <span class="eyebrow">Stage M3</span>
             <h3>M3 四情景配置优化与方案推荐</h3>
-            <p>围绕 M1 的 S0 生成候选硬件方案，分别针对 C1-C4 四种运行情景筛选最优配置，再横向比较投资、运行成本、可靠性与电网依赖。</p>
+            <p>围绕 M1 的 S0 生成 PV、储能和 PCS 候选方案，充电桩数量固定沿用 M1 SLA 定容结果，分别针对 C1-C4 四种运行情景筛选最优配置，再横向比较投资、运行成本、可靠性与电网依赖。</p>
           </div>
           <button class="primary-btn" id="run-m3" disabled>运行 M3 情景化优化</button>
         </div>
@@ -327,7 +327,7 @@
             <article class="info-card">
               <h4>候选配置搜索过程</h4>
               <div class="flow-steps wide">
-                <span>M1 S0</span><span>生成候选配置</span><span>四情景分别复算</span><span>情景约束筛选</span><span>成本风险排序</span><span>C1-C4 横向比较</span>
+                <span>M1 S0</span><span>固定 SLA 桩数</span><span>生成光储 PCS 候选</span><span>四情景分别复算</span><span>情景约束筛选</span><span>C1-C4 横向比较</span>
               </div>
             </article>
           </section>

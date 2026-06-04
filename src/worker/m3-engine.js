@@ -88,17 +88,6 @@ function scaledValues(baseValue, factors, {
   return uniqueNumbers(values);
 }
 
-function buildPileValues(baseCount, factors) {
-  if (baseCount <= 0) return [0];
-
-  const minCount = Math.max(1, Math.floor(baseCount * Math.min(...factors)));
-  const values = factors.map((factor) => {
-    return Math.max(minCount, Math.round(baseCount * factor));
-  });
-
-  return uniqueNumbers(values);
-}
-
 function hasSizingPressure(m2, targets = []) {
   const hints = m2?.handoffToM3?.sizingHints || m2?.sizingHints || [];
 
@@ -118,6 +107,12 @@ const UNSERVED_TOLERANCE_MIN_KWH = 1;
 function toFiniteNumber(value, fallback = 0) {
   const number = Number(value);
   return Number.isFinite(number) ? number : fallback;
+}
+
+function safeRatio(numerator, denominator) {
+  const value = toFiniteNumber(numerator, 0);
+  const base = toFiniteNumber(denominator, 0);
+  return Math.abs(base) > 1e-9 ? value / base : 0;
 }
 
 function getTransformerLimitKw(params) {
@@ -159,8 +154,6 @@ function generateM3Candidates(baseline, params, referenceProfile, m2 = null) {
     ? [0.45, 0.60, 0.75, 0.90, 1.00, 1.15, 1.35]
     : [0.40, 0.55, 0.70, 0.85, 1.00, 1.15];
 
-  const pileFactors = [0.60, 0.75, 0.90, 1.00];
-
   const pvValues = scaledValues(baseline.pvKw, pvFactors, {
     minValue: Math.min(10, baseline.pvKw),
     maxValue: roofPvMax,
@@ -177,18 +170,6 @@ function generateM3Candidates(baseline, params, referenceProfile, m2 = null) {
     roundTo: 10
   });
 
-  const n7Values = buildPileValues(baseline.n7kw, pileFactors);
-  const n30Values = buildPileValues(baseline.n30kw, pileFactors);
-
-  const pilePairs = [];
-
-  n7Values.forEach((n7kw) => {
-    n30Values.forEach((n30kw) => {
-      if (n7kw + n30kw <= 0) return;
-      pilePairs.push([n7kw, n30kw]);
-    });
-  });
-
   const baselineCapex = calcCapexWan(baseline, params).capexWan;
   const candidates = [];
   let id = 0;
@@ -196,46 +177,45 @@ function generateM3Candidates(baseline, params, referenceProfile, m2 = null) {
   pvValues.forEach((pvKw) => {
     storageValues.forEach((storageKwh) => {
       pcsValues.forEach((pcsKw) => {
-        pilePairs.forEach(([n7kw, n30kw]) => {
-          const hardware = buildHardwarePlan({
-            pvKw,
-            storageKwh,
-            pcsKw,
-            n7kw,
-            n30kw,
-            transformerLimitKw: params.transformerLimitKw
-          });
+        const hardware = buildHardwarePlan({
+          pvKw,
+          storageKwh,
+          pcsKw,
+          n7kw: baseline.n7kw,
+          n30kw: baseline.n30kw,
+          transformerLimitKw: params.transformerLimitKw
+        });
 
-          const capex = calcCapexWan(hardware, params);
+        const capex = calcCapexWan(hardware, params);
 
-          const deltas = {
-            deltaPvKw: round(hardware.pvKw - baseline.pvKw, 1),
-            deltaStorageKwh: round(hardware.storageKwh - baseline.storageKwh, 1),
-            deltaPcsKw: round(hardware.pcsKw - baseline.pcsKw, 1),
-            deltaN7kw: hardware.n7kw - baseline.n7kw,
-            deltaN30kw: hardware.n30kw - baseline.n30kw
-          };
+        const deltas = {
+          deltaPvKw: round(hardware.pvKw - baseline.pvKw, 1),
+          deltaStorageKwh: round(hardware.storageKwh - baseline.storageKwh, 1),
+          deltaPcsKw: round(hardware.pcsKw - baseline.pcsKw, 1),
+          deltaN7kw: 0,
+          deltaN30kw: 0
+        };
 
-          candidates.push({
-            candidateId: `C${String(++id).padStart(3, "0")}`,
-            hardwarePlan: hardware,
-            capex,
-            deltas,
-            extraCapexWan: round(capex.capexWan - baselineCapex, 2),
-            searchMeta: {
-              mode: needEnergyReinforce || needGridReinforce
-                ? "reduction_with_reinforcement"
-                : "redundancy_reduction",
-              pvFactor: baseline.pvKw > 0 ? round(hardware.pvKw / baseline.pvKw, 3) : 0,
-              storageFactor: baseline.storageKwh > 0 ? round(hardware.storageKwh / baseline.storageKwh, 3) : 0,
-              pcsFactor: baseline.pcsKw > 0 ? round(hardware.pcsKw / baseline.pcsKw, 3) : 0,
-              n7Factor: baseline.n7kw > 0 ? round(hardware.n7kw / baseline.n7kw, 3) : 0,
-              n30Factor: baseline.n30kw > 0 ? round(hardware.n30kw / baseline.n30kw, 3) : 0
-            },
-            demandPeakCoverage: referenceProfile.peakLoadKw > 0
-              ? round(hardware.pcsKw / referenceProfile.peakLoadKw, 3)
-              : 1
-          });
+        candidates.push({
+          candidateId: `C${String(++id).padStart(3, "0")}`,
+          hardwarePlan: hardware,
+          capex,
+          deltas,
+          extraCapexWan: round(capex.capexWan - baselineCapex, 2),
+          searchMeta: {
+            mode: needEnergyReinforce || needGridReinforce
+              ? "reduction_with_reinforcement_fixed_piles"
+              : "redundancy_reduction_fixed_piles",
+            pvFactor: baseline.pvKw > 0 ? round(hardware.pvKw / baseline.pvKw, 3) : 0,
+            storageFactor: baseline.storageKwh > 0 ? round(hardware.storageKwh / baseline.storageKwh, 3) : 0,
+            pcsFactor: baseline.pcsKw > 0 ? round(hardware.pcsKw / baseline.pcsKw, 3) : 0,
+            n7Factor: 1,
+            n30Factor: 1,
+            pileSizingSource: "m1_sla_fixed"
+          },
+          demandPeakCoverage: referenceProfile.peakLoadKw > 0
+            ? round(hardware.pcsKw / referenceProfile.peakLoadKw, 3)
+            : 1
         });
       });
     });
@@ -314,6 +294,28 @@ function feasibilityForScenario(scenarioKey, summary, params) {
     gridImportViolationKwh: round(gridImportViolationKwh, 3),
     gridPeakViolationKw: round(gridPeakViolationKw, 3),
     violationScore: round(violationScore, 3)
+  };
+}
+
+function buildEndToEndMetrics(summary, demandProfile) {
+  const energyDemandKwh = toFiniteNumber(summary.demandKwh, 0);
+  const rawDemandKwh = toFiniteNumber(demandProfile.rawEnergyKwh, energyDemandKwh);
+  const energyUnservedKwh = toFiniteNumber(summary.unservedEnergyKwh, 0);
+  const pileUnservedKwh = Math.max(0, rawDemandKwh - energyDemandKwh);
+  const endToEndUnservedKwh = pileUnservedKwh + energyUnservedKwh;
+  const endToEndDeliveredKwh = Math.max(0, rawDemandKwh - endToEndUnservedKwh);
+  const endToEndServiceRate = rawDemandKwh > 0
+    ? endToEndDeliveredKwh / rawDemandKwh
+    : 1;
+
+  return {
+    rawDemandKwh: round(rawDemandKwh, 1),
+    energyDemandKwh: round(energyDemandKwh, 1),
+    pileUnservedKwh: round(pileUnservedKwh, 1),
+    energyUnservedEnergyKwh: round(energyUnservedKwh, 1),
+    endToEndUnservedKwh: round(endToEndUnservedKwh, 1),
+    endToEndUnservedRate: round(safeRatio(endToEndUnservedKwh, rawDemandKwh), 5),
+    endToEndServiceRate: round(endToEndServiceRate, 5)
   };
 }
 
@@ -398,6 +400,7 @@ function evaluateCandidate(candidate, scenarioKey, demandProfile, irradiance, pa
   });
   const summary = simulation.summary;
   const feasibility = feasibilityForScenario(scenarioKey, summary, params);
+  const endToEnd = buildEndToEndMetrics(summary, demandProfile);
   const objectiveWan = scenarioObjective(
     scenarioKey,
     candidate,
@@ -408,9 +411,16 @@ function evaluateCandidate(candidate, scenarioKey, demandProfile, irradiance, pa
   const annualCost = calcAnnualCostWan(candidate, summary, params);
 
   const validationMetrics = {
-    unservedEnergyKwh: round(summary.unservedEnergyKwh, 1),
+    unservedEnergyKwh: endToEnd.endToEndUnservedKwh,
+    endToEndUnservedKwh: endToEnd.endToEndUnservedKwh,
+    energyUnservedEnergyKwh: endToEnd.energyUnservedEnergyKwh,
+    pileUnservedKwh: endToEnd.pileUnservedKwh,
+    rawDemandKwh: endToEnd.rawDemandKwh,
+    energyDemandKwh: endToEnd.energyDemandKwh,
     deficitHours: round(summary.deficitHours, 1),
-    serviceRate: round(summary.serviceRate, 5),
+    serviceRate: endToEnd.endToEndServiceRate,
+    endToEndServiceRate: endToEnd.endToEndServiceRate,
+    energyServiceRate: round(summary.serviceRate, 5),
     socMinPct: round(summary.socMinPct, 1),
     peakLoadKw: round(summary.peakLoadKw, 1)
   };
@@ -451,7 +461,12 @@ function evaluateCandidate(candidate, scenarioKey, demandProfile, irradiance, pa
       objectiveWan: round(objectiveWan, 2),
       totalCostProxyWan: round(objectiveWan, 2)
     },
-    summary
+    summary: {
+      ...summary,
+      ...endToEnd,
+      unservedEnergyKwh: endToEnd.endToEndUnservedKwh,
+      serviceRate: endToEnd.endToEndServiceRate
+    }
   };
 }
 
@@ -495,7 +510,7 @@ function getOptimizationTarget(scenarioKey) {
     offgrid_rule:
       "在离网且不进行需求调度的条件下，寻找满足全年服务率、SOC 安全线和未满足电量约束的最小可行配置。",
     offgrid_dispatch:
-      "在离网且采用 D1 光伏强时段需求重排的条件下，评估调度对 PV、储能、PCS 和充电桩规模的削减作用。",
+      "在离网且采用 D1 光伏强时段需求重排的条件下，评估调度对 PV、储能和 PCS 规模的削减作用；充电桩数量沿用 M1 SLA 定容结果。",
     grid_rule:
       "在并网且不进行需求调度的条件下，寻找硬件投资、年运维和全年购电成本综合最低的配置。",
     grid_dispatch:
@@ -715,7 +730,10 @@ function buildScenarioCard(scenarioKey, optimum, savings) {
       gridCostWan: cost.gridCostWan,
 
       serviceRate: validation.serviceRate,
+      energyServiceRate: validation.energyServiceRate,
       unservedEnergyKwh: validation.unservedEnergyKwh,
+      energyUnservedEnergyKwh: validation.energyUnservedEnergyKwh,
+      pileUnservedKwh: validation.pileUnservedKwh,
       deficitHours: validation.deficitHours,
       socMinPct: validation.socMinPct,
 
@@ -777,7 +795,10 @@ function buildComparisonRows(result) {
       n30Reduction: saving.n30Reduction,
 
       serviceRate: metrics.serviceRate,
+      energyServiceRate: metrics.energyServiceRate,
       unservedEnergyKwh: metrics.unservedEnergyKwh,
+      energyUnservedEnergyKwh: metrics.energyUnservedEnergyKwh,
+      pileUnservedKwh: metrics.pileUnservedKwh,
       socMinPct: metrics.socMinPct,
 
       gridImportKwh: metrics.gridImportKwh,
@@ -864,8 +885,8 @@ export function runM3ScenarioOptimization(context) {
     configurationAssessment: {
       conclusion: "M3 已基于 M2 全年 D0/D1 需求画像完成四情景最小可行配置搜索。",
       optimizationMode: "minimum_feasible_configuration",
-      baselineRole: "S0 作为上游基准配置与削减参照，不再作为默认最终推荐配置。",
-      selectionRule: "先满足全年服务率、未满足电量、SOC 和并网容量约束，再选择年综合成本最低的候选配置。",
+      baselineRole: "S0 作为上游基准配置与削减参照，不再作为默认最终推荐配置；充电桩数量固定沿用 M1 SLA 定容结果。",
+      selectionRule: "候选集只优化 PV、储能和 PCS，固定 M1 SLA 桩数；先满足全年服务率、未满足电量、SOC 和并网容量约束，再选择年综合成本最低的候选配置。",
       scenarioBinding: SCENARIO_PROFILE_BINDINGS
     },
 
